@@ -25,7 +25,7 @@ int main(int argc, char* argv[]) {
   int iters = 20;
   int payload = 1000;
   int delay = 10;
-  int n = 1000;
+  int n = 1024;
 
   MPI_Init(&argc, &argv);
 
@@ -73,7 +73,7 @@ int main(int argc, char* argv[]) {
     elapsed += (finish.tv_nsec - start.tv_nsec) / (1000 * 1000);
 
     if (rank == 0) {
-      std::cout << procs << " " << elapsed / procs << std::endl;
+      std::cout << procs << " " << elapsed / iters << std::endl;
     }
   }
 
