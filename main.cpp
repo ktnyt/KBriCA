@@ -35,44 +35,46 @@ int main(int argc, char* argv[]) {
   MPI_Comm_size(MPI_COMM_WORLD, &size);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-  int m = n / size;
-
   std::vector<Component*> components(n);
 
-  Load load(payload, delay);
+  for (int procs = 1; procs <= size; procs *= 2) {
+    int m = n / procs;
 
-  for (int i = 0; i < n; ++i) {
-    int group = i / m;
-    components[i] = new Component(load, group);
-  }
+    Load load(payload, delay);
 
-  for (int i = 0; i < n - 1; ++i) {
-    int j = i + 1;
-    Component* source = components[i];
-    Component* target = components[j];
-    std::vector<Component*> tmp;
-    tmp.push_back(source);
-    target->connect(tmp);
-  }
+    for (int i = 0; i < n; ++i) {
+      int group = i / m;
+      components[i] = new Component(load, group);
+    }
 
-  VTSScheduler s(components);
+    for (int i = 0; i < n - 1; ++i) {
+      int j = i + 1;
+      Component* source = components[i];
+      Component* target = components[j];
+      std::vector<Component*> tmp;
+      tmp.push_back(source);
+      target->connect(tmp);
+    }
 
-  struct timespec start, finish;
-  double elapsed;
-  clock_gettime(CLOCK_MONOTONIC, &start);
+    VTSScheduler s(components);
 
-  for (int i = 0; i < iters; ++i) {
-    s.step();
-  }
+    struct timespec start, finish;
+    double elapsed;
+    clock_gettime(CLOCK_MONOTONIC, &start);
 
-  MPI_Barrier(MPI_COMM_WORLD);
+    for (int i = 0; i < iters; ++i) {
+      s.step();
+    }
 
-  clock_gettime(CLOCK_MONOTONIC, &finish);
-  elapsed = (finish.tv_sec - start.tv_sec) * 1000;
-  elapsed += (finish.tv_nsec - start.tv_nsec) / (1000 * 1000);
+    MPI_Barrier(MPI_COMM_WORLD);
 
-  if (rank == 0) {
-    std::cout << elapsed << std::endl;
+    clock_gettime(CLOCK_MONOTONIC, &finish);
+    elapsed = (finish.tv_sec - start.tv_sec) * 1000;
+    elapsed += (finish.tv_nsec - start.tv_nsec) / (1000 * 1000);
+
+    if (rank == 0) {
+      std::cout << procs << " " << elapsed << std::endl;
+    }
   }
 
   for (std::size_t i = 0; i < components.size(); ++i) {
