@@ -46,6 +46,15 @@ int main(int argc, char* argv[]) {
     components[i] = new Component(load, group);
   }
 
+  for (int i = 0; i < n - 1; ++i) {
+    int j = i + 1;
+    Component* source = components[i];
+    Component* target = components[j];
+    std::vector<Component*> tmp;
+    tmp.push_back(source);
+    target->connect(tmp);
+  }
+
   VTSScheduler s(components);
 
   struct timespec start, finish;
