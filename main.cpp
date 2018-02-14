@@ -38,8 +38,6 @@ int main(int argc, char* argv[]) {
   std::vector<Component*> components(n);
 
   for (int procs = 1; procs <= size; procs *= 2) {
-    iters *= 2;
-
     int m = n / procs;
 
     Load load(payload, delay);
@@ -64,7 +62,7 @@ int main(int argc, char* argv[]) {
     double elapsed;
     clock_gettime(CLOCK_MONOTONIC, &start);
 
-    for (int i = 0; i < iters; ++i) {
+    for (int i = 0; i < iters * procs; ++i) {
       s.step();
     }
 
@@ -75,7 +73,7 @@ int main(int argc, char* argv[]) {
     elapsed += (finish.tv_nsec - start.tv_nsec) / (1000 * 1000);
 
     if (rank == 0) {
-      std::cout << procs << " " << elapsed << std::endl;
+      std::cout << procs << " " << elapsed / procs << std::endl;
     }
   }
 
