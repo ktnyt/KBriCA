@@ -22,7 +22,7 @@ class Load : public Functor {
 };
 
 int main(int argc, char* argv[]) {
-  int iters = 100;
+  int iters = 20;
   int payload = 1000;
   int delay = 10;
   int n = 1000;
@@ -38,6 +38,8 @@ int main(int argc, char* argv[]) {
   std::vector<Component*> components(n);
 
   for (int procs = 1; procs <= size; procs *= 2) {
+    iters *= 2;
+
     int m = n / procs;
 
     Load load(payload, delay);
