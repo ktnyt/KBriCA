@@ -8,23 +8,43 @@
 
 using namespace kbrica;
 
-class Load : public Functor {
+class Timer {
  public:
-  Load(int payload, int delay) : payload(payload), delay(delay) {}
-  Buffer operator()(std::vector<Buffer>& inputs) {
-    usleep(delay);
-    return Buffer(payload);
+  Timer() { reset(); }
+
+  void reset() { clock_gettime(CLOCK_MONOTONIC, &ref); }
+
+  int elapsed() {
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    int sec = now.tv_sec - ref.tv_sec;
+    int nsec = now.tv_nsec - ref.tv_nsec;
+    return (sec * 1000 * 1000) + (nsec / 1000);
   }
 
  private:
-  int payload;
+  struct timespec ref;
+  struct timespec now;
+};
+
+class Load : public Functor {
+ public:
+  Load(int payload, int delay) : buffer(payload), delay(delay) {}
+  Buffer operator()(std::vector<Buffer>& inputs) {
+    Timer timer;
+    while (timer.elapsed() < delay) {
+    }
+    return buffer;
+  }
+
+ private:
+  Buffer buffer;
   int delay;
 };
 
 int main(int argc, char* argv[]) {
-  int iters = 10;
+  int iters = 5;
   int payload = 1000 * sizeof(float);
-  int delay = 1000;
+  int delay = 100;
   int n = 1024;
 
   MPI_Init(&argc, &argv);
@@ -58,9 +78,7 @@ int main(int argc, char* argv[]) {
 
     VTSScheduler s(components);
 
-    struct timespec start, finish;
-    double elapsed;
-    clock_gettime(CLOCK_MONOTONIC, &start);
+    Timer timer;
 
     for (int i = 0; i < iters * procs; ++i) {
       s.step();
@@ -68,11 +86,8 @@ int main(int argc, char* argv[]) {
 
     MPI_Barrier(MPI_COMM_WORLD);
 
-    clock_gettime(CLOCK_MONOTONIC, &finish);
-    elapsed = (finish.tv_sec - start.tv_sec) * 1000;
-    elapsed += (finish.tv_nsec - start.tv_nsec) / (1000 * 1000);
-
     if (rank == 0) {
+      int elapsed = timer.elapsed();
       std::cout << procs << " " << elapsed / (iters * procs) << std::endl;
     }
   }
