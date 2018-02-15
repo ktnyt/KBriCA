@@ -42,7 +42,6 @@ class Load : public Functor {
 };
 
 int main(int argc, char* argv[]) {
-  int miniter = 10;
   int payload = 1000 * sizeof(float);
   int delay = 100;
   int n = 1024;
@@ -83,13 +82,15 @@ int main(int argc, char* argv[]) {
       }
     }
 
+    MPI_Barrier(MPI_COMM_WORLD);
+
     VTSScheduler s(flattened);
 
     Timer timer;
 
     int iters = 0;
 
-    while (timer.elapsed() < 1000 * 1000 || iters < miniter) {
+    while (iters < 10) {
       s.step();
       ++iters;
     }
@@ -102,8 +103,6 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i < n; ++i) {
       flattened[i]->wait();
     }
-
-    MPI_Barrier(MPI_COMM_WORLD);
 
     for (std::size_t i = 0; i < flattened.size(); ++i) {
       delete flattened[i];
