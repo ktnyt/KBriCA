@@ -94,12 +94,16 @@ int main(int argc, char* argv[]) {
       ++iters;
     }
 
-    MPI_Barrier(MPI_COMM_WORLD);
-
     if (rank == 0) {
       int elapsed = timer.elapsed();
       std::cout << procs << " " << elapsed / iters << std::endl;
     }
+
+    for (int i = 0; i < n; ++i) {
+      flattened[i]->wait();
+    }
+
+    MPI_Barrier(MPI_COMM_WORLD);
 
     for (std::size_t i = 0; i < flattened.size(); ++i) {
       delete flattened[i];

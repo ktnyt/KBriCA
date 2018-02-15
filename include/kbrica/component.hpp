@@ -78,6 +78,8 @@ class Component {
 
   void addTarget(int rank) { targets.push_back(rank); }
 
+  void wait() { MPI_Wait(&request, &status); }
+
   const Buffer getInput(std::size_t i) { return inputs[i]; }
   const Buffer getOutput() const { return output; }
 
