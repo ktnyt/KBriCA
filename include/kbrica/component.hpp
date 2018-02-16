@@ -12,7 +12,11 @@ namespace kbrica {
 class Component {
  public:
   Component(Functor& f, int wanted, int tag = 0)
-      : f(f), wanted(wanted), request(MPI_REQUEST_NULL), tag(tag), size(0) {
+      : f(f),
+        wanted(wanted),
+        request(MPI_REQUEST_NULL),
+        tag(tag),
+        output(f.output_size()) {
     MPI_Comm_rank(MPI_COMM_WORLD, &actual);
   }
 
@@ -44,10 +48,7 @@ class Component {
           }
         }
 
-        size = output.size();
-        MPI_Send(&size, 1, MPI_INT, targets[i], tag * 2 + 1, MPI_COMM_WORLD);
-
-        MPI_Isend(output.data(), output.size(), MPI_CHAR, targets[i], tag * 2,
+        MPI_Isend(output.data(), output.size(), MPI_CHAR, targets[i], tag,
                   MPI_COMM_WORLD, &request);
       }
 
@@ -63,14 +64,7 @@ class Component {
           }
         }
 
-        MPI_Recv(&size, 1, MPI_INT, wanted, tag * 2 + 1, MPI_COMM_WORLD,
-                 &status);
-
-        if (output.size() != size) {
-          output = Buffer(size);
-        }
-
-        MPI_Irecv(output.data(), output.size(), MPI_CHAR, wanted, tag * 2,
+        MPI_Irecv(output.data(), output.size(), MPI_CHAR, wanted, tag,
                   MPI_COMM_WORLD, &request);
       }
     }
@@ -104,7 +98,6 @@ class Component {
 
   std::vector<Buffer> inputs;
   Buffer output;
-  int size;
 
   std::vector<Component*> connected;
 };

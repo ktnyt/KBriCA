@@ -36,6 +36,7 @@ class Load : public Functor {
     }
     return buffer;
   }
+  int output_size() { return payload; }
 
  private:
   int payload;
