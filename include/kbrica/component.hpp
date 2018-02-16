@@ -43,17 +43,18 @@ class Component {
     for (std::size_t i = 0; i < targets.size(); ++i) {
       if (wanted == actual && targets[i] != wanted) {
         size = output.size();
-        MPI_Send(&size, 1, MPI_INT, targets[i], tag, MPI_COMM_WORLD);
+        MPI_Send(&size, 1, MPI_INT, targets[i], tag * 2 + 1, MPI_COMM_WORLD);
       }
 
       if (wanted != actual && targets[i] == actual) {
-        MPI_Recv(&size, 1, MPI_INT, wanted, tag, MPI_COMM_WORLD, &status);
+        MPI_Recv(&size, 1, MPI_INT, wanted, tag * 2 + 1, MPI_COMM_WORLD,
+                 &status);
       }
     }
 
     for (std::size_t i = 0; i < targets.size(); ++i) {
       if (wanted == actual && targets[i] != wanted) {
-        MPI_Isend(output.data(), output.size(), MPI_CHAR, targets[i], tag,
+        MPI_Isend(output.data(), output.size(), MPI_CHAR, targets[i], tag * 2,
                   MPI_COMM_WORLD, &request);
       }
 
@@ -62,7 +63,7 @@ class Component {
           output = Buffer(size);
         }
 
-        MPI_Irecv(output.data(), output.size(), MPI_CHAR, wanted, tag,
+        MPI_Irecv(output.data(), output.size(), MPI_CHAR, wanted, tag * 2,
                   MPI_COMM_WORLD, &request);
       }
     }
