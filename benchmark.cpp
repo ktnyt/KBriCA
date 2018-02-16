@@ -1,5 +1,4 @@
 #include <unistd.h>
-#include <cstdlib>
 #include <iostream>
 #include <vector>
 
@@ -55,61 +54,59 @@ int main(int argc, char* argv[]) {
   MPI_Comm_size(MPI_COMM_WORLD, &size);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-  int procs = argc > 0 ? atoi(argv[1]) : size;
+  for (int procs = 1; procs <= size; ++procs) {
+    std::vector<std::vector<Component*> > components(procs);
+    std::vector<Component*> flattened(n);
 
-  std::vector<std::vector<Component*> > components(procs);
-  std::vector<Component*> flattened(n);
+    Load load(payload, delay);
 
-  Load load(payload, delay);
-
-  for (int i = 0; i < n; ++i) {
-    Component* component = new Component(load, i % procs);
-    components[i % procs].push_back(component);
-    flattened[i] = component;
-  }
-
-  for (int i = 0; i < components.size(); ++i) {
-    for (int j = 0; j < components[i].size() - 1; ++j) {
-      int k = j + 1;
-      std::vector<Component*> inputs;
-      inputs.push_back(components[i][j]);
-      components[i][k]->connect(inputs);
+    for (int i = 0; i < n; ++i) {
+      Component* component = new Component(load, i % procs);
+      components[i % procs].push_back(component);
+      flattened[i] = component;
     }
 
-    if (i > 0) {
-      int j = i - 1;
-      std::vector<Component*> inputs;
-      inputs.push_back(components[i].front());
-      components[j].back()->connect(inputs);
+    for (int i = 0; i < components.size(); ++i) {
+      for (int j = 0; j < components[i].size() - 1; ++j) {
+        int k = j + 1;
+        std::vector<Component*> inputs;
+        inputs.push_back(components[i][j]);
+        components[i][k]->connect(inputs);
+      }
+
+      if (i > 0) {
+        int j = i - 1;
+        std::vector<Component*> inputs;
+        inputs.push_back(components[i].front());
+        components[j].back()->connect(inputs);
+      }
     }
-  }
 
-  MPI_Barrier(MPI_COMM_WORLD);
+    MPI_Barrier(MPI_COMM_WORLD);
 
-  VTSScheduler s(flattened);
+    VTSScheduler s(flattened);
 
-  Timer timer;
+    Timer timer;
 
-  int iters = 0;
+    int iters = 0;
 
-  while (iters < 10) {
-    s.step();
-    ++iters;
-  }
+    while (iters < 10) {
+      s.step();
+      ++iters;
+    }
 
-  MPI_Barrier(MPI_COMM_WORLD);
+    if (rank == 0) {
+      int elapsed = timer.elapsed();
+      std::cout << procs << " " << elapsed / iters << std::endl;
+    }
 
-  if (rank == 0) {
-    int elapsed = timer.elapsed();
-    std::cout << procs << " " << elapsed / iters << std::endl;
-  }
+    for (int i = 0; i < n; ++i) {
+      flattened[i]->wait();
+    }
 
-  for (int i = 0; i < n; ++i) {
-    flattened[i]->wait();
-  }
-
-  for (std::size_t i = 0; i < flattened.size(); ++i) {
-    delete flattened[i];
+    for (std::size_t i = 0; i < flattened.size(); ++i) {
+      delete flattened[i];
+    }
   }
 
   MPI_Finalize();
