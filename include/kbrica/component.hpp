@@ -29,15 +29,15 @@ class Component {
   }
 
   void expose() {
-    int flag;
-    MPI_Test(&request, &flag, &status);
-
-    if (flag) {
-      request = MPI_REQUEST_NULL;
-    }
-
     if (request != MPI_REQUEST_NULL) {
-      return;
+      int flag;
+      MPI_Test(&request, &flag, &status);
+
+      if (!flag) {
+        return;
+      }
+
+      request = MPI_REQUEST_NULL;
     }
 
     for (std::size_t i = 0; i < targets.size(); ++i) {
