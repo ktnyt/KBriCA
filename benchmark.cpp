@@ -28,16 +28,17 @@ class Timer {
 
 class Load : public Functor {
  public:
-  Load(int payload, int delay) : buffer(payload), delay(delay) {}
+  Load(int payload, int delay) : payload(payload), delay(delay) {}
   Buffer operator()(std::vector<Buffer>& inputs) {
     Timer timer;
+    Buffer buffer(payload);
     while (timer.elapsed() < delay) {
     }
     return buffer;
   }
 
  private:
-  Buffer buffer;
+  int payload;
   int delay;
 };
 

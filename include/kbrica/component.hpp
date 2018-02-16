@@ -5,6 +5,8 @@
 
 #include "mpi.h"
 
+#include <iostream>
+
 namespace kbrica {
 
 class Component {
@@ -29,36 +31,41 @@ class Component {
   }
 
   void expose() {
-    if (request != MPI_REQUEST_NULL) {
-      int flag;
-      MPI_Test(&request, &flag, &status);
-
-      if (!flag) {
-        return;
-      }
-
-      request = MPI_REQUEST_NULL;
-    }
-
     for (std::size_t i = 0; i < targets.size(); ++i) {
       if (wanted == actual && targets[i] != wanted) {
+        if (request != MPI_REQUEST_NULL) {
+          int flag;
+          MPI_Test(&request, &flag, &status);
+
+          if (flag) {
+            return;
+          } else {
+            request = MPI_REQUEST_NULL;
+          }
+        }
+
         size = output.size();
         MPI_Send(&size, 1, MPI_INT, targets[i], tag * 2 + 1, MPI_COMM_WORLD);
-      }
 
-      if (wanted != actual && targets[i] == actual) {
-        MPI_Recv(&size, 1, MPI_INT, wanted, tag * 2 + 1, MPI_COMM_WORLD,
-                 &status);
-      }
-    }
-
-    for (std::size_t i = 0; i < targets.size(); ++i) {
-      if (wanted == actual && targets[i] != wanted) {
         MPI_Isend(output.data(), output.size(), MPI_CHAR, targets[i], tag * 2,
                   MPI_COMM_WORLD, &request);
       }
 
       if (wanted != actual && targets[i] == actual) {
+        if (request != MPI_REQUEST_NULL) {
+          int flag;
+          MPI_Test(&request, &flag, &status);
+
+          if (flag) {
+            return;
+          } else {
+            request = MPI_REQUEST_NULL;
+          }
+        }
+
+        MPI_Recv(&size, 1, MPI_INT, wanted, tag * 2 + 1, MPI_COMM_WORLD,
+                 &status);
+
         if (output.size() != size) {
           output = Buffer(size);
         }
