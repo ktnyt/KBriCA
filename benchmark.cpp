@@ -1,4 +1,5 @@
 #include <unistd.h>
+#include <cstdlib>
 #include <iostream>
 #include <vector>
 
@@ -54,14 +55,16 @@ int main(int argc, char* argv[]) {
   MPI_Comm_size(MPI_COMM_WORLD, &size);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-  std::vector<std::vector<Component*> > components(size);
+  int procs = argc > 0 ? atoi(argv[1]) : size;
+
+  std::vector<std::vector<Component*> > components(procs);
   std::vector<Component*> flattened(n);
 
   Load load(payload, delay);
 
   for (int i = 0; i < n; ++i) {
-    Component* component = new Component(load, i % size);
-    components[i % size].push_back(component);
+    Component* component = new Component(load, i % procs);
+    components[i % procs].push_back(component);
     flattened[i] = component;
   }
 
@@ -98,7 +101,7 @@ int main(int argc, char* argv[]) {
 
   if (rank == 0) {
     int elapsed = timer.elapsed();
-    std::cout << size << " " << elapsed / iters << std::endl;
+    std::cout << procs << " " << elapsed / iters << std::endl;
   }
 
   for (int i = 0; i < n; ++i) {
