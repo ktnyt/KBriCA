@@ -110,7 +110,7 @@ int main(int argc, char* argv[]) {
 
   MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-  for (int i = 0; i < 2; ++i) {
+  for (int i = 0; i < 3; ++i) {
     for (int procs = 1; procs <= size; ++procs) {
       run(procs, delay, payload, n);
     }
