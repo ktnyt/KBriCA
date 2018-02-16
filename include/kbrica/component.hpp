@@ -37,13 +37,13 @@ class Component {
   void expose() {
     for (std::size_t i = 0; i < targets.size(); ++i) {
       if (wanted == actual && targets[i] != wanted) {
-        MPI_Isend(output.data(), output.size(), MPI_CHAR, targets[i], tag,
-                  MPI_COMM_WORLD, &request);
+        MPI_Send(output.data(), output.size(), MPI_CHAR, targets[i], tag,
+                 MPI_COMM_WORLD);
       }
 
       if (wanted != actual && targets[i] == actual) {
-        MPI_Irecv(output.data(), output.size(), MPI_CHAR, wanted, tag,
-                  MPI_COMM_WORLD, &request);
+        MPI_Recv(output.data(), output.size(), MPI_CHAR, wanted, tag,
+                 MPI_COMM_WORLD, &status);
       }
     }
   }
