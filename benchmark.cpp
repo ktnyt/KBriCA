@@ -92,14 +92,15 @@ void run(int procs, int delay, int payload, int n) {
 
   int iters = 0;
 
-  while (iters < 10) {
+  while (iters < 100) {
     s.step();
     ++iters;
   }
 
   if (rank == 0) {
     int elapsed = timer.elapsed();
-    std::cout << delay << " " << procs << " " << elapsed / iters << std::endl;
+    std::cout << delay << " " << procs << " " << elapsed / iters / procs
+              << std::endl;
   }
 
   for (int i = 0; i < n; ++i) {
