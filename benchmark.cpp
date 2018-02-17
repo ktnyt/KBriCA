@@ -32,7 +32,16 @@ class Load : public Functor {
   Buffer operator()(std::vector<Buffer>& inputs) {
     Timer timer;
     Buffer buffer(payload);
+    float value = 0.0;
     while (timer.elapsed() < delay) {
+      for (int i = 0; i < payload; ++i) {
+        float tmp = (float)rand() / (float)(RAND_MAX);
+        if (i % 2) {
+          reinterpret_cast<float*>(buffer.get())[i] += value + tmp;
+        } else {
+          reinterpret_cast<float*>(buffer.get())[i] += value - tmp;
+        }
+      }
     }
     return buffer;
   }
@@ -112,7 +121,7 @@ int main(int argc, char* argv[]) {
 
   MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-  for (int i = 0; i < 3; ++i) {
+  for (int i = 0; i < 1; ++i) {
     for (int procs = 1; procs <= size; ++procs) {
       run(procs, delay, payload, n);
     }
