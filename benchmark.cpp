@@ -34,7 +34,7 @@ class Load : public Functor {
     Buffer buffer(payload);
     float value = 0.0;
     while (timer.elapsed() < delay) {
-      for (int i = 0; i < payload; ++i) {
+      for (int i = 0; i < payload / sizeof(float); ++i) {
         float tmp = (float)rand() / (float)(RAND_MAX);
         if (i % 2) {
           reinterpret_cast<float*>(buffer.get())[i] += value + tmp;
