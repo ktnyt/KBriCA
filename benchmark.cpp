@@ -2,6 +2,7 @@
 #include <iostream>
 #include <vector>
 
+#include <omp.h>
 #include "mpi.h"
 
 #include "kbrica.hpp"
@@ -113,7 +114,6 @@ void run(int procs, int delay, int payload, int n) {
 int main(int argc, char* argv[]) {
   int delay = 100;
   int payload = 1000 * sizeof(float);
-  int n = 1024;
 
   MPI_Init(&argc, &argv);
 
@@ -123,6 +123,7 @@ int main(int argc, char* argv[]) {
 
   for (int i = 0; i < 3; ++i) {
     for (int procs = 1; procs <= size; ++procs) {
+      int n = procs * omp_get_max_threads();
       run(procs, delay, payload, n);
     }
     delay *= 10;
