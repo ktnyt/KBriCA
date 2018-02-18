@@ -99,8 +99,7 @@ void run(int procs, int delay, int payload, int n) {
 
   if (rank == 0) {
     int elapsed = timer.elapsed();
-    std::cout << delay << " " << procs << " " << elapsed / iters / procs
-              << std::endl;
+    std::cout << delay << " " << procs << " " << elapsed << std::endl;
   }
 
   for (int i = 0; i < n; ++i) {
