@@ -18,21 +18,22 @@ class VTSScheduler {
   VTSScheduler(std::vector<Component*> components) : components_(components) {}
 
   void step() {
-#pragma omp parallel for
+#pragma omp parallel for nowait
     for (std::size_t i = 0; i < components_.size(); ++i) {
       components_[i]->collect();
     }
 
-#pragma omp parallel for
+#pragma omp parallel for nowait
     for (std::size_t i = 0; i < components_.size(); ++i) {
       components_[i]->execute();
     }
 
-#pragma omp parallel for
+#pragma omp parallel for nowait
     for (std::size_t i = 0; i < components_.size(); ++i) {
       components_[i]->expose();
     }
 
+#pragma omp barrier
     MPI_Barrier(MPI_COMM_WORLD);
   }
 
