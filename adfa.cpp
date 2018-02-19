@@ -151,11 +151,11 @@ class Tester : public Functor {
     Buffer y = inputs[1];
 
     if (x.len()) {
-      x_list.push_back(x.clone());
+      x_list.push_back(x);
     }
 
     if (y.len()) {
-      y_list.push_back(y.clone());
+      y_list.push_back(y);
     }
 
     while (x_list.size() && y_list.size()) {

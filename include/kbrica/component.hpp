@@ -40,9 +40,7 @@ class Component {
 
       if (wanted != actual && targets[i] == actual) {
         MPI_Recv(&size, 1, MPI_INT, wanted, tag, MPI_COMM_WORLD, &status);
-        if (output.size() != size) {
-          output = Buffer(size);
-        }
+        output = Buffer(size);
         MPI_Recv(output.data(), output.size(), MPI_CHAR, wanted, tag,
                  MPI_COMM_WORLD, &status);
       }
