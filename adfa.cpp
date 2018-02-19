@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <iostream>
 #include <limits>
+#include <list>
 #include <queue>
 #include <vector>
 
@@ -56,7 +57,7 @@ class HiddenLayer : public Functor {
       int cols = *reinterpret_cast<int*>(buffer);
       buffer += sizeof(int);
 
-      int data = *reinterpret_cast<float*>(buffer);
+      float* data = reinterpret_cast<float*>(buffer);
 
       Map<MatrixXf> x(data, rows, cols);
       MatrixXf y = (x * W).unaryExpr(&sigmoid);
@@ -66,7 +67,7 @@ class HiddenLayer : public Functor {
 
         MatrixXf d_z = z - x;
         MatrixXf d_y =
-            (d_z * U.transpose().array() * y.unaryExpr(&dsigmoid).array());
+            (d_z * U.transpose()).array() * y.unaryExpr(&dsigmoid).array();
 
         MatrixXf d_W = -x.transpose() * d_y;
         MatrixXf d_U = -y.transpose() * d_z;
@@ -109,14 +110,129 @@ class HiddenLayer : public Functor {
   float epsilon;
 };
 
+class Pipe : public Functor {
+ public:
+  Buffer operator()(std::vector<Buffer>& inputs) {
+    if (inputs[0].len() == 0) {
+      return Buffer(0);
+    }
+    return inputs[0].clone();
+  }
+};
+
+template <typename T>
+class ImageLoader : public Functor {
+ public:
+  ImageLoader(MNIST<T>& mnist) : mnist(mnist) {}
+  Buffer operator()(std::vector<Buffer>& inputs) {
+    T* images = mnist.train_images[batch];
+    char* casted = reinterpret_cast<char*>(images);
+
+    Buffer buffer(mnist.train_images.dims * sizeof(T));
+
+    std::copy(casted, casted + buffer.len(), buffer.get());
+
+    batch += 1;
+    batch %= mnist.train_images.length;
+
+    return buffer;
+  }
+
+ private:
+  MNIST<T>& mnist;
+  int batch;
+};
+
+class Tester : public Functor {
+ public:
+  Tester() : output(sizeof(int)) { *reinterpret_cast<int*>(output.get()) = 0; }
+  Buffer operator()(std::vector<Buffer>& inputs) {
+    Buffer x = inputs[0];
+    Buffer y = inputs[1];
+
+    if (x.len()) {
+      x_list.push_back(x.clone());
+    }
+
+    if (y.len()) {
+      y_list.push_back(y.clone());
+    }
+
+    while (x_list.size() && y_list.size()) {
+      std::cout << "check" << std::endl;
+      Buffer a = x_list.front();
+      Buffer b = y_list.front();
+      x_list.pop_front();
+      y_list.pop_front();
+      print_mnist(reinterpret_cast<int*>(a.get()));
+      print_mnist(reinterpret_cast<int*>(b.get()));
+    }
+
+    return output;
+  }
+
+ private:
+  Buffer output;
+  std::list<Buffer> x_list;
+  std::list<Buffer> y_list;
+};
+
 int main(int argc, char* argv[]) {
   MPI_Init(&argc, &argv);
 
-  int size;
   int rank;
 
-  MPI_Comm_size(MPI_COMM_WORLD, &size);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+  MNIST<int> mnist("./mnist");
+  mnist.train_images.scale(64, true);
+
+  ImageLoader<int> loader(mnist);
+  Pipe pipe1;
+  Pipe pipe2;
+  Tester tester;
+
+  Component* c0 = new Component(loader, 0);
+  Component* c1 = new Component(pipe1, 1);
+  Component* c2 = new Component(pipe2, 2);
+  Component* c3 = new Component(tester, 3);
+
+  {
+    std::vector<Component*> inputs;
+    inputs.push_back(c0);
+    c1->connect(inputs);
+  }
+
+  {
+    std::vector<Component*> inputs;
+    inputs.push_back(c1);
+    c2->connect(inputs);
+  }
+
+  {
+    std::vector<Component*> inputs;
+    inputs.push_back(c2);
+    inputs.push_back(c0);
+    c3->connect(inputs);
+  }
+
+  std::vector<Component*> all;
+  all.push_back(c0);
+  all.push_back(c1);
+  all.push_back(c2);
+  all.push_back(c3);
+
+  VTSScheduler s(all);
+
+  s.step();
+  s.step();
+  s.step();
+  s.step();
+
+  delete c0;
+  delete c1;
+  delete c2;
+  delete c3;
 
   MPI_Finalize();
 
