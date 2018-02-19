@@ -9,7 +9,6 @@ namespace kbrica {
 class Functor {
  public:
   virtual Buffer operator()(std::vector<Buffer>& inputs) = 0;
-  virtual int output_size() = 0;
 };
 
 }  // namespace kbrica

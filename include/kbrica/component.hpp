@@ -5,18 +5,12 @@
 
 #include "mpi.h"
 
-#include <iostream>
-
 namespace kbrica {
 
 class Component {
  public:
   Component(Functor& f, int wanted, int tag = 0)
-      : f(f),
-        wanted(wanted),
-        request(MPI_REQUEST_NULL),
-        tag(tag),
-        output(f.output_size()) {
+      : f(f), wanted(wanted), request(MPI_REQUEST_NULL), tag(tag) {
     MPI_Comm_rank(MPI_COMM_WORLD, &actual);
   }
 
@@ -36,12 +30,19 @@ class Component {
 
   void expose() {
     for (std::size_t i = 0; i < targets.size(); ++i) {
+      int size;
       if (wanted == actual && targets[i] != wanted) {
+        size = output.size();
+        MPI_Send(&size, 1, MPI_INT, targets[i], tag, MPI_COMM_WORLD);
         MPI_Send(output.data(), output.size(), MPI_CHAR, targets[i], tag,
                  MPI_COMM_WORLD);
       }
 
       if (wanted != actual && targets[i] == actual) {
+        MPI_Recv(&size, 1, MPI_INT, wanted, tag, MPI_COMM_WORLD, &status);
+        if (output.size() != size) {
+          output = Buffer(size);
+        }
         MPI_Recv(output.data(), output.size(), MPI_CHAR, wanted, tag,
                  MPI_COMM_WORLD, &status);
       }

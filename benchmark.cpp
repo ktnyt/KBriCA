@@ -2,7 +2,6 @@
 #include <iostream>
 #include <vector>
 
-#include <omp.h>
 #include "mpi.h"
 
 #include "kbrica.hpp"
@@ -46,7 +45,6 @@ class Load : public Functor {
     }
     return buffer;
   }
-  int output_size() { return payload; }
 
  private:
   int payload;
@@ -123,8 +121,7 @@ int main(int argc, char* argv[]) {
 
   for (int i = 0; i < 3; ++i) {
     for (int procs = 1; procs <= size; ++procs) {
-      int n = procs * omp_get_max_threads();
-      run(procs, delay, payload, n);
+      run(procs, delay, payload, procs);
     }
     delay *= 10;
   }
