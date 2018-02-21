@@ -1,3 +1,6 @@
+#ifndef __ADFA_ACTIVATIONS_HPP__
+#define __ADFA_ACTIVATIONS_HPP__
+
 #include <cmath>
 
 float dtanh(float y) { return 1.0f - y * y; }
@@ -19,3 +22,5 @@ float dswishx(float x) {
 float relu(float x) { return x > 0 ? x : 0.0f; }
 
 float drelu(float y) { return y > 0 ? 1.0f : 0.0f; }
+
+#endif

@@ -1,24 +1,43 @@
 #ifndef __ADFA_UTILS_HPP__
 #define __ADFA_UTILS_HPP__
 
+#include <algorithm>
+#include <exception>
 #include <fstream>
 #include <sstream>
-#include <exception>
 #include <stdexcept>
-#include <algorithm>
 #include "Eigen/Core"
 
-Eigen::VectorXf softmax(Eigen::VectorXf v);
+Eigen::VectorXf softmax(Eigen::VectorXf v) {
+  Eigen::VectorXf max = Eigen::VectorXf::Ones(v.size()) * v.maxCoeff();
+  Eigen::VectorXf r = (v - max).unaryExpr(&expf);
+  return r / r.sum();
+}
 
-float accuracy(Eigen::MatrixXf y, Eigen::MatrixXf t);
+float accuracy(Eigen::MatrixXf y, Eigen::MatrixXf t) {
+  float total = 0.0f;
+  for (std::size_t i = 0; i < y.rows(); ++i) {
+    Eigen::MatrixXf::Index max_y, max_t, tmp;
+    y.row(i).maxCoeff(&tmp, &max_y);
+    t.row(i).maxCoeff(&tmp, &max_t);
+    if (max_y == max_t) {
+      total += 1.0;
+    }
+  }
+  return total / y.rows();
+}
 
-float cross_entropy(Eigen::MatrixXf y, Eigen::MatrixXf t);
+float cross_entropy(Eigen::MatrixXf y, Eigen::MatrixXf t) {
+  return -(y.array() * ((t.array() + 1e-10f).log())).sum() / t.rows();
+}
 
-float mean_squared_error(Eigen::MatrixXf y, Eigen::MatrixXf t);
+float mean_squared_error(Eigen::MatrixXf y, Eigen::MatrixXf t) {
+  Eigen::MatrixXf d = y - t;
+  Eigen::VectorXf f(Eigen::Map<Eigen::VectorXf>(d.data(), d.cols() * d.rows()));
+  return f.dot(f) / d.size();
+}
 
-std::string format_name(int rank, const char* name);
-
-template<typename Vector>
+template <typename Vector>
 void serialize_vector(const char* filename, Vector& v) {
   typename Vector::Index size = v.size();
 
@@ -35,9 +54,9 @@ void serialize_vector(const char* filename, Vector& v) {
   std::copy(psize, psize + index_size, buffer);
   std::copy(data, data + body_size, buffer + index_size);
 
-  std::ofstream f(filename, std::ios::out|std::ios::binary);
+  std::ofstream f(filename, std::ios::out | std::ios::binary);
 
-  if(!f.is_open()) {
+  if (!f.is_open()) {
     std::ostringstream os;
     os << "Failed to open file: " << filename;
     throw std::runtime_error(os.str());
@@ -48,11 +67,11 @@ void serialize_vector(const char* filename, Vector& v) {
   f.close();
 }
 
-template<typename Vector>
+template <typename Vector>
 void deserialize_vector(const char* filename, Vector& v) {
-  std::ifstream f(filename, std::ios::in|std::ios::binary|std::ios::ate);
+  std::ifstream f(filename, std::ios::in | std::ios::binary | std::ios::ate);
 
-  if(!f.is_open()) {
+  if (!f.is_open()) {
     std::ostringstream os;
     os << "Failed to open file: " << filename;
     throw std::runtime_error(os.str());
@@ -77,7 +96,7 @@ void deserialize_vector(const char* filename, Vector& v) {
   f.close();
 }
 
-template<typename Matrix>
+template <typename Matrix>
 void serialize_matrix(const char* filename, Matrix& m) {
   typename Matrix::Index rows = m.rows();
   typename Matrix::Index cols = m.cols();
@@ -98,9 +117,9 @@ void serialize_matrix(const char* filename, Matrix& m) {
   std::copy(pcols, pcols + index_size, buffer + index_size);
   std::copy(data, data + body_size, buffer + header_size);
 
-  std::ofstream f(filename, std::ios::out|std::ios::binary);
+  std::ofstream f(filename, std::ios::out | std::ios::binary);
 
-  if(!f.is_open()) {
+  if (!f.is_open()) {
     std::ostringstream os;
     os << "Failed to open file: " << filename;
     throw std::runtime_error(os.str());
@@ -111,11 +130,11 @@ void serialize_matrix(const char* filename, Matrix& m) {
   f.close();
 }
 
-template<typename Matrix>
+template <typename Matrix>
 void deserialize_matrix(const char* filename, Matrix& m) {
-  std::ifstream f(filename, std::ios::in|std::ios::binary|std::ios::ate);
+  std::ifstream f(filename, std::ios::in | std::ios::binary | std::ios::ate);
 
-  if(!f.is_open()) {
+  if (!f.is_open()) {
     std::ostringstream os;
     os << "Failed to open file: " << filename;
     throw std::runtime_error(os.str());
@@ -143,4 +162,4 @@ void deserialize_matrix(const char* filename, Matrix& m) {
   f.close();
 }
 
-#endif // __ADFA_UTILS_HPP__
+#endif

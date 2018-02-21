@@ -48,14 +48,22 @@ class Component {
   }
 
   void connect(std::vector<Component*> sources) {
-    connected = sources;
-    inputs = std::vector<Buffer>(connected.size());
-    for (std::size_t i = 0; i < connected.size(); ++i) {
-      connected[i]->addTarget(wanted);
+    for (std::size_t i = 0; i < sources.size(); ++i) {
+      addConnection(sources[i]);
     }
   }
 
-  void addTarget(int rank) { targets.push_back(rank); }
+  void addConnection(Component* source) {
+    connected.push_back(source);
+    source->addTarget(wanted);
+    inputs = std::vector<Buffer>(connected.size());
+  }
+
+  void addTarget(int rank) {
+    if (std::find(targets.begin(), targets.end(), rank) == targets.end()) {
+      targets.push_back(rank);
+    }
+  }
 
   void wait() { MPI_Wait(&request, &status); }
 

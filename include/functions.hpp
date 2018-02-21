@@ -1,32 +1,34 @@
-#ifndef __ADFAMPI_FUNCTIONS_HPP__
-#define __ADFAMPI_FUNCTIONS_HPP__
+#ifndef __ADFA_FUNCTIONS_HPP__
+#define __ADFA_FUNCTIONS_HPP__
 
 #include "Eigen/Core"
 
-typedef Eigen::MatrixXf (*Function)(Eigen::MatrixXf&);
+#include "activations.hpp"
+#include "utils.hpp"
 
-struct Sigmoid {
-  static MatrixXf forward(MatrixXf& x) {
-    return x.unaryExpr(&sigmoid);
-  }
+using namespace Eigen;
 
-  static MatrixXf backward(MatrixXf& y) {
-    return y.unaryExpr(&dsigmoid);
-  }
+class Function {
+ public:
+  virtual MatrixXf forward(MatrixXf&) = 0;
+  virtual MatrixXf backward(MatrixXf&) = 0;
 };
 
-struct Softmax {
-  static MatrixXf forward(MatrixXf& x) {
+struct Sigmoid : public Function {
+  MatrixXf forward(MatrixXf& x) { return x.unaryExpr(&sigmoid); }
+  MatrixXf backward(MatrixXf& y) { return y.unaryExpr(&dsigmoid); }
+};
+
+struct Softmax : public Function {
+  MatrixXf forward(MatrixXf& x) {
     MatrixXf y(x.rows(), x.cols());
-    for(int i = 0; i < x.rows(); ++i) {
+    for (int i = 0; i < x.rows(); ++i) {
       y.row(i) = softmax(x.row(i));
     }
     return y;
   }
 
-  static MatrixXf backward(MatrixXf& y) {
-    return MatrixXf::Ones(y.rows(), y.cols());
-  }
+  MatrixXf backward(MatrixXf& y) { return MatrixXf::Ones(y.rows(), y.cols()); }
 };
 
-#endif  // __ADFAMPI_FUNCTIONS_HPP__
+#endif

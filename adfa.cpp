@@ -11,170 +11,249 @@
 #include "mpi.h"
 
 #include "activations.hpp"
+#include "functions.hpp"
 #include "utils.hpp"
 
 using namespace Eigen;
 using namespace kbrica;
 
-class HiddenLayer : public Functor {
+template <typename MatrixT>
+Buffer bufferFromMatrix(MatrixT& m) {
+  Buffer buffer(sizeof(int) * 2 + sizeof(float) * m.size());
+
+  char* data = buffer.get();
+
+  *reinterpret_cast<int*>(data) = m.rows();
+  data += sizeof(int);
+
+  *reinterpret_cast<int*>(data) = m.cols();
+  data += sizeof(int);
+
+  float* casted = reinterpret_cast<float*>(data);
+
+  std::copy(m.data(), m.data() + m.size(), casted);
+
+  return buffer;
+}
+
+MatrixXf matrixFromBuffer(Buffer& b) {
+  char* data = b.get();
+
+  int rows = *reinterpret_cast<int*>(data);
+  data += sizeof(int);
+
+  int cols = *reinterpret_cast<int*>(data);
+  data += sizeof(int);
+
+  Map<MatrixXf> map(reinterpret_cast<float*>(data), rows, cols);
+
+  MatrixXf matrix(rows, cols);
+
+  float* casted = reinterpret_cast<float*>(data);
+
+  std::copy(casted, casted + rows * cols, matrix.data());
+
+  return map;
+}
+
+class ImageLoader : public Functor {
  public:
-  HiddenLayer(int n_input, int n_output, int n_final, float lr, float decay)
-      : lr(lr),
-        decay(decay),
-        aelr(lr * 0.1),
-        epsilon(std::numeric_limits<float>::epsilon()) {
-    {
-      W = MatrixXf::Random(n_input, n_output);
-      float max = W.maxCoeff();
-      W /= (max * sqrt(static_cast<float>(n_input)));
-    }
-    {
-      U = MatrixXf::Random(n_output, n_input);
-      float max = U.maxCoeff();
-      U /= (max * sqrt(static_cast<float>(n_output)));
-    }
-    {
-      B = MatrixXf::Random(n_final, n_output);
-      float max = B.maxCoeff();
-      B /= (max * sqrt(static_cast<float>(n_final)));
-    }
+  ImageLoader(MNIST<float>& mnist, int batchsize)
+      : mnist(mnist), batchsize(batchsize) {}
+  Buffer operator()(std::vector<Buffer>& inputs) {
+    float* images = mnist.train_images.getBatch(batchnum, batchsize);
+
+    Map<MatrixXf> x(images, batchsize, mnist.train_images.dims);
+
+    batchnum += batchsize;
+
+    return bufferFromMatrix(x);
   }
 
-  Buffer operator()(std::vector<Buffer> inputs) {
+ private:
+  MNIST<float>& mnist;
+
+  int batchsize;
+  int batchnum;
+};
+
+class LabelLoader : public Functor {
+ public:
+  LabelLoader(MNIST<float>& mnist, int batchsize)
+      : mnist(mnist), batchsize(batchsize) {}
+  Buffer operator()(std::vector<Buffer>& inputs) {
+    float* labels = mnist.train_labels.getBatch(batchnum, batchsize);
+
+    Map<MatrixXf> y(labels, batchsize, 10);
+
+    batchnum += batchsize;
+
+    return bufferFromMatrix(y);
+  }
+
+ private:
+  MNIST<float>& mnist;
+
+  int batchsize;
+  int batchnum;
+};
+
+class Layer : public Functor {
+ public:
+  Layer(int n_input, int n_output, Function& f, float lr)
+      : b(n_output), f(f), lr(lr) {
+    W = MatrixXf::Random(n_input, n_output);
+    float max = W.maxCoeff();
+    W /= (max * sqrt(static_cast<float>(n_input)));
+  }
+
+  Buffer operator()(std::vector<Buffer>& inputs) {
     Buffer input = inputs[0];
     Buffer error = inputs[1];
-    Buffer output(0);
 
-    if (input.len() != 0) {
-      char* buffer = input.get();
+    if (error.len()) {
+      MatrixXf x = matrixFromBuffer(input_queue.front());
+      MatrixXf y = matrixFromBuffer(output_queue.front());
+      input_queue.pop();
+      output_queue.pop();
 
-      int num = *reinterpret_cast<int*>(buffer);
-      buffer += sizeof(int);
+      MatrixXf e = matrixFromBuffer(error);
 
-      int rows = *reinterpret_cast<int*>(buffer);
-      buffer += sizeof(int);
+      MatrixXf d_x = (e * B).array() * f.backward(y).array();
+      MatrixXf d_W = -x.transpose() * d_x;
 
-      int cols = *reinterpret_cast<int*>(buffer);
-      buffer += sizeof(int);
+      W += d_W * lr;
 
-      float* data = reinterpret_cast<float*>(buffer);
-
-      Map<MatrixXf> x(data, rows, cols);
-      MatrixXf y = (x * W).unaryExpr(&sigmoid);
-
-      if (aelr > epsilon) {
-        MatrixXf z = (y * U).unaryExpr(&sigmoid);
-
-        MatrixXf d_z = z - x;
-        MatrixXf d_y =
-            (d_z * U.transpose()).array() * y.unaryExpr(&dsigmoid).array();
-
-        MatrixXf d_W = -x.transpose() * d_y;
-        MatrixXf d_U = -y.transpose() * d_z;
-
-        W += d_W * aelr;
-        U += d_U * aelr;
-
-        aelr *= decay;
+      for (int i = 0; i < d_x.cols(); ++i) {
+        b(i) += d_x.col(i).sum() * lr;
       }
+    }
 
-      int size = sizeof(int) * 3 + sizeof(float) * y.size();
-      output = Buffer(size);
-      std::copy(y.data(), y.data() + y.size(), output.get());
+    if (input.len()) {
+      MatrixXf x = matrixFromBuffer(input);
+      MatrixXf a = x * W;
+      a.transpose().colwise() += b;
+      MatrixXf y = f.forward(y);
+      Buffer output = bufferFromMatrix(y);
 
       input_queue.push(input);
       output_queue.push(output);
+
+      return output;
     }
 
-    if (error.len() != 0) {
-      Buffer input = input_queue.front();
-      Buffer output = output_queue.front();
-      input_queue.pop();
-      output_queue.pop();
-    }
-
-    return output;
+    return Buffer();
   }
 
  private:
   MatrixXf W;
-  MatrixXf U;
+  VectorXf b;
+
   MatrixXf B;
 
   std::queue<Buffer> input_queue;
   std::queue<Buffer> output_queue;
 
+  Function& f;
+
   float lr;
-  float decay;
-  float aelr;
-  float epsilon;
 };
 
-class Pipe : public Functor {
+class Subtract : public Functor {
  public:
   Buffer operator()(std::vector<Buffer>& inputs) {
-    if (inputs[0].len() == 0) {
-      return Buffer(0);
+    Buffer a = inputs[0];
+    Buffer b = inputs[1];
+
+    if (a.len()) {
+      a_queue.push(a);
     }
-    return inputs[0].clone();
-  }
-};
 
-template <typename T>
-class ImageLoader : public Functor {
- public:
-  ImageLoader(MNIST<T>& mnist) : mnist(mnist) {}
-  Buffer operator()(std::vector<Buffer>& inputs) {
-    T* images = mnist.train_images[batch];
-    char* casted = reinterpret_cast<char*>(images);
+    if (b.len()) {
+      b_queue.push(b);
+    }
 
-    Buffer buffer(mnist.train_images.dims * sizeof(T));
+    if (a_queue.size() && b_queue.size()) {
+      MatrixXf x = matrixFromBuffer(a_queue.front());
+      MatrixXf y = matrixFromBuffer(b_queue.front());
+      MatrixXf z = x - y;
+      return bufferFromMatrix(z);
+    }
 
-    std::copy(casted, casted + buffer.len(), buffer.get());
-
-    batch += 1;
-    batch %= mnist.train_images.length;
-
-    return buffer;
+    return Buffer();
   }
 
  private:
-  MNIST<T>& mnist;
-  int batch;
+  std::queue<Buffer> a_queue;
+  std::queue<Buffer> b_queue;
 };
 
-class Tester : public Functor {
+class CrossEntropy : public Functor {
  public:
-  Tester() : output(sizeof(int)) { *reinterpret_cast<int*>(output.get()) = 0; }
   Buffer operator()(std::vector<Buffer>& inputs) {
-    Buffer x = inputs[0];
-    Buffer y = inputs[1];
+    Buffer input = inputs[0];
+    Buffer label = inputs[1];
 
-    if (x.len()) {
-      x_list.push_back(x);
+    if (input.len()) {
+      input_queue.push(input);
     }
 
-    if (y.len()) {
-      y_list.push_back(y);
+    if (label.len()) {
+      label_queue.push(label);
     }
 
-    while (x_list.size() && y_list.size()) {
-      std::cout << "check" << std::endl;
-      Buffer a = x_list.front();
-      Buffer b = y_list.front();
-      x_list.pop_front();
-      y_list.pop_front();
-      print_mnist(reinterpret_cast<int*>(a.get()));
-      print_mnist(reinterpret_cast<int*>(b.get()));
+    if (input_queue.size() && label_queue.size()) {
+      MatrixXf y = matrixFromBuffer(input_queue.front());
+      MatrixXf t = matrixFromBuffer(label_queue.front());
+      input_queue.pop();
+      label_queue.pop();
+
+      Buffer buffer(sizeof(float));
+      *reinterpret_cast<float*>(buffer.get()) = cross_entropy(y, t);
+
+      return buffer;
     }
 
-    return output;
+    return Buffer();
   }
 
  private:
-  Buffer output;
-  std::list<Buffer> x_list;
-  std::list<Buffer> y_list;
+  std::queue<Buffer> input_queue;
+  std::queue<Buffer> label_queue;
+};
+
+class Accuracy : public Functor {
+ public:
+  Buffer operator()(std::vector<Buffer>& inputs) {
+    Buffer input = inputs[0];
+    Buffer label = inputs[1];
+
+    if (input.len()) {
+      input_queue.push(input);
+    }
+
+    if (label.len()) {
+      label_queue.push(label);
+    }
+
+    if (input_queue.size() && label_queue.size()) {
+      MatrixXf y = matrixFromBuffer(input_queue.front());
+      MatrixXf t = matrixFromBuffer(label_queue.front());
+      input_queue.pop();
+      label_queue.pop();
+
+      Buffer buffer(sizeof(float));
+      *reinterpret_cast<float*>(buffer.get()) = accuracy(y, t);
+
+      return buffer;
+    }
+
+    return Buffer();
+  }
+
+ private:
+  std::queue<Buffer> input_queue;
+  std::queue<Buffer> label_queue;
 };
 
 int main(int argc, char* argv[]) {
@@ -184,55 +263,53 @@ int main(int argc, char* argv[]) {
 
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-  MNIST<int> mnist("./mnist");
-  mnist.train_images.scale(64, true);
+  MNIST<float> mnist("./mnist");
+  mnist.train_images.scale(256.0, true);
 
-  ImageLoader<int> loader(mnist);
-  Pipe pipe1;
-  Pipe pipe2;
-  Tester tester;
+  int batchsize = 100;
 
-  Component* c0 = new Component(loader, 0);
-  Component* c1 = new Component(pipe1, 1);
-  Component* c2 = new Component(pipe2, 2);
-  Component* c3 = new Component(tester, 3);
+  ImageLoader images_f(mnist, batchsize);
+  LabelLoader labels_f(mnist, batchsize);
 
-  {
-    std::vector<Component*> inputs;
-    inputs.push_back(c0);
-    c1->connect(inputs);
-  }
+  Sigmoid sigmoid;
 
-  {
-    std::vector<Component*> inputs;
-    inputs.push_back(c1);
-    c2->connect(inputs);
-  }
+  Layer layer_f(mnist.train_images.dims, 10, sigmoid, 0.05);
+  Subtract subtract_f;
+  Accuracy accuracy_f;
+  CrossEntropy cross_entropy_f;
 
-  {
-    std::vector<Component*> inputs;
-    inputs.push_back(c2);
-    inputs.push_back(c0);
-    c3->connect(inputs);
-  }
+  Component* images_c = new Component(images_f, 0);
+  Component* labels_c = new Component(labels_f, 0);
+  Component* layer_c = new Component(layer_f, 1);
+  Component* subtract_c = new Component(subtract_f, 2);
+  Component* accuracy_c = new Component(accuracy_f, 2);
+  Component* cross_entropy_c = new Component(cross_entropy_f, 2);
 
-  std::vector<Component*> all;
-  all.push_back(c0);
-  all.push_back(c1);
-  all.push_back(c2);
-  all.push_back(c3);
+  layer_c->addConnection(images_c);
+  layer_c->addConnection(subtract_c);
 
-  VTSScheduler s(all);
+  subtract_c->addConnection(layer_c);
+  subtract_c->addConnection(labels_c);
+
+  accuracy_c->addConnection(layer_c);
+  accuracy_c->addConnection(labels_c);
+
+  cross_entropy_c->addConnection(layer_c);
+  cross_entropy_c->addConnection(labels_c);
+
+  VTSScheduler s;
+
+  s.addComponent(images_c);
+  s.addComponent(labels_c);
+  s.addComponent(layer_c);
+  s.addComponent(subtract_c);
+  s.addComponent(accuracy_c);
+  s.addComponent(cross_entropy_c);
 
   s.step();
   s.step();
   s.step();
   s.step();
-
-  delete c0;
-  delete c1;
-  delete c2;
-  delete c3;
 
   MPI_Finalize();
 

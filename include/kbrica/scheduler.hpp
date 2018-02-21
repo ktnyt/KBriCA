@@ -11,7 +11,10 @@ namespace kbrica {
 
 class VTSScheduler {
  public:
+  VTSScheduler() {}
   VTSScheduler(std::vector<Component*> components) : components_(components) {}
+
+  void addComponent(Component* component) { components_.push_back(component); }
 
   void step() {
     for (std::size_t i = 0; i < components_.size(); ++i) {
