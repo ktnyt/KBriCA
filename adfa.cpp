@@ -67,6 +67,10 @@ class ImageLoader : public Functor {
 
     batchnum += batchsize;
 
+    if (batchnum >= batchsize) {
+      batchnum = 0;
+    }
+
     return bufferFromMatrix(x);
   }
 
@@ -88,6 +92,10 @@ class LabelLoader : public Functor {
 
     batchnum += batchsize;
 
+    if (batchnum >= batchsize) {
+      batchnum = 0;
+    }
+
     return bufferFromMatrix(y);
   }
 
@@ -101,43 +109,61 @@ class LabelLoader : public Functor {
 class Layer : public Functor {
  public:
   Layer(int n_input, int n_output, Function& f, float lr)
-      : b(n_output), f(f), lr(lr) {
-    W = MatrixXf::Random(n_input, n_output);
-    float max = W.maxCoeff();
-    W /= (max * sqrt(static_cast<float>(n_input)));
+      : b(n_output), c(n_input), batch(0), loss(0), f(f), lr(lr) {
+    {
+      W = MatrixXf::Random(n_input, n_output);
+      float max = W.maxCoeff();
+      W /= (max * sqrt(static_cast<float>(n_input)));
+    }
+    {
+      U = MatrixXf::Random(n_output, n_input);
+      float max = U.maxCoeff();
+      U /= (max * sqrt(static_cast<float>(n_output)));
+    }
   }
 
   Buffer operator()(std::vector<Buffer>& inputs) {
     Buffer input = inputs[0];
-    Buffer error = inputs[1];
-
-    if (error.len()) {
-      MatrixXf x = matrixFromBuffer(input_queue.front());
-      MatrixXf y = matrixFromBuffer(output_queue.front());
-      input_queue.pop();
-      output_queue.pop();
-
-      MatrixXf e = matrixFromBuffer(error);
-
-      MatrixXf d_x = (e * B).array() * f.backward(y).array();
-      MatrixXf d_W = -x.transpose() * d_x;
-
-      W += d_W * lr;
-
-      for (int i = 0; i < d_x.cols(); ++i) {
-        b(i) += d_x.col(i).sum() * lr;
-      }
-    }
 
     if (input.len()) {
       MatrixXf x = matrixFromBuffer(input);
       MatrixXf a = x * W;
       a.transpose().colwise() += b;
-      MatrixXf y = f.forward(y);
+      MatrixXf y = a.unaryExpr(&sigmoid);
       Buffer output = bufferFromMatrix(y);
 
-      input_queue.push(input);
-      output_queue.push(output);
+      MatrixXf t = y * U;
+      t.transpose().colwise() += c;
+      MatrixXf z = t.unaryExpr(&sigmoid);
+
+      MatrixXf d_z = z - x;
+      MatrixXf d_y =
+          (d_z * U.transpose()).array() * y.unaryExpr(&dsigmoid).array();
+
+      MatrixXf d_W = -x.transpose() * d_y;
+      MatrixXf d_U = -y.transpose() * d_z;
+
+      W += d_W * lr;
+      U += d_U * lr;
+
+      for (int i = 0; i < d_y.cols(); ++i) {
+        b(i) += d_y.col(i).sum() * lr;
+      }
+
+      for (int i = 0; i < d_z.cols(); ++i) {
+        c(i) += d_z.col(i).sum() * lr;
+      }
+
+      loss += mean_squared_error(z, x) / static_cast<float>(x.rows());
+
+      if (++batch == 600) {
+        std::cout << loss << std::endl;
+        loss = 0;
+        batch = 0;
+      }
+
+      // input_queue.push(input);
+      // output_queue.push(output);
 
       return output;
     }
@@ -149,111 +175,20 @@ class Layer : public Functor {
   MatrixXf W;
   VectorXf b;
 
+  MatrixXf U;
+  VectorXf c;
+
   MatrixXf B;
 
-  std::queue<Buffer> input_queue;
-  std::queue<Buffer> output_queue;
+  int batch;
+  float loss;
+
+  // std::queue<Buffer> input_queue;
+  // std::queue<Buffer> output_queue;
 
   Function& f;
 
   float lr;
-};
-
-class Subtract : public Functor {
- public:
-  Buffer operator()(std::vector<Buffer>& inputs) {
-    Buffer a = inputs[0];
-    Buffer b = inputs[1];
-
-    if (a.len()) {
-      a_queue.push(a);
-    }
-
-    if (b.len()) {
-      b_queue.push(b);
-    }
-
-    if (a_queue.size() && b_queue.size()) {
-      MatrixXf x = matrixFromBuffer(a_queue.front());
-      MatrixXf y = matrixFromBuffer(b_queue.front());
-      MatrixXf z = x - y;
-      return bufferFromMatrix(z);
-    }
-
-    return Buffer();
-  }
-
- private:
-  std::queue<Buffer> a_queue;
-  std::queue<Buffer> b_queue;
-};
-
-class CrossEntropy : public Functor {
- public:
-  Buffer operator()(std::vector<Buffer>& inputs) {
-    Buffer input = inputs[0];
-    Buffer label = inputs[1];
-
-    if (input.len()) {
-      input_queue.push(input);
-    }
-
-    if (label.len()) {
-      label_queue.push(label);
-    }
-
-    if (input_queue.size() && label_queue.size()) {
-      MatrixXf y = matrixFromBuffer(input_queue.front());
-      MatrixXf t = matrixFromBuffer(label_queue.front());
-      input_queue.pop();
-      label_queue.pop();
-
-      Buffer buffer(sizeof(float));
-      *reinterpret_cast<float*>(buffer.get()) = cross_entropy(y, t);
-
-      return buffer;
-    }
-
-    return Buffer();
-  }
-
- private:
-  std::queue<Buffer> input_queue;
-  std::queue<Buffer> label_queue;
-};
-
-class Accuracy : public Functor {
- public:
-  Buffer operator()(std::vector<Buffer>& inputs) {
-    Buffer input = inputs[0];
-    Buffer label = inputs[1];
-
-    if (input.len()) {
-      input_queue.push(input);
-    }
-
-    if (label.len()) {
-      label_queue.push(label);
-    }
-
-    if (input_queue.size() && label_queue.size()) {
-      MatrixXf y = matrixFromBuffer(input_queue.front());
-      MatrixXf t = matrixFromBuffer(label_queue.front());
-      input_queue.pop();
-      label_queue.pop();
-
-      Buffer buffer(sizeof(float));
-      *reinterpret_cast<float*>(buffer.get()) = accuracy(y, t);
-
-      return buffer;
-    }
-
-    return Buffer();
-  }
-
- private:
-  std::queue<Buffer> input_queue;
-  std::queue<Buffer> label_queue;
 };
 
 int main(int argc, char* argv[]) {
@@ -274,42 +209,24 @@ int main(int argc, char* argv[]) {
   Sigmoid sigmoid;
 
   Layer layer_f(mnist.train_images.dims, 10, sigmoid, 0.05);
-  Subtract subtract_f;
-  Accuracy accuracy_f;
-  CrossEntropy cross_entropy_f;
 
   Component* images_c = new Component(images_f, 0);
   Component* labels_c = new Component(labels_f, 0);
   Component* layer_c = new Component(layer_f, 1);
-  Component* subtract_c = new Component(subtract_f, 2);
-  Component* accuracy_c = new Component(accuracy_f, 2);
-  Component* cross_entropy_c = new Component(cross_entropy_f, 2);
 
   layer_c->addConnection(images_c);
-  layer_c->addConnection(subtract_c);
-
-  subtract_c->addConnection(layer_c);
-  subtract_c->addConnection(labels_c);
-
-  accuracy_c->addConnection(layer_c);
-  accuracy_c->addConnection(labels_c);
-
-  cross_entropy_c->addConnection(layer_c);
-  cross_entropy_c->addConnection(labels_c);
 
   VTSScheduler s;
 
   s.addComponent(images_c);
   s.addComponent(labels_c);
   s.addComponent(layer_c);
-  s.addComponent(subtract_c);
-  s.addComponent(accuracy_c);
-  s.addComponent(cross_entropy_c);
 
   s.step();
-  s.step();
-  s.step();
-  s.step();
+
+  for (int i = 0; i < 600 * 10; ++i) {
+    s.step();
+  }
 
   MPI_Finalize();
 
