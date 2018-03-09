@@ -21,7 +21,7 @@ template <typename MatrixT>
 Buffer bufferFromMatrix(MatrixT& m) {
   Buffer buffer(sizeof(int) * 2 + sizeof(float) * m.size());
 
-  char* data = buffer.get();
+  char* data = buffer.data();
 
   *reinterpret_cast<int*>(data) = m.rows();
   data += sizeof(int);
@@ -37,7 +37,7 @@ Buffer bufferFromMatrix(MatrixT& m) {
 }
 
 MatrixXf matrixFromBuffer(Buffer& b) {
-  char* data = b.get();
+  char* data = b.data();
 
   int rows = *reinterpret_cast<int*>(data);
   data += sizeof(int);
@@ -125,7 +125,7 @@ class Layer : public Functor {
   Buffer operator()(std::vector<Buffer>& inputs) {
     Buffer input = inputs[0];
 
-    if (input.len()) {
+    if (input.size()) {
       MatrixXf x = matrixFromBuffer(input);
       MatrixXf a = x * W;
       a.transpose().colwise() += b;

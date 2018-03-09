@@ -2,7 +2,7 @@
 #define __KBRICA_FUNCTOR_HPP__
 
 #include <vector>
-#include "kbrica/buffer.hpp"
+#include "kbrica/shared_vector.hpp"
 
 namespace kbrica {
 

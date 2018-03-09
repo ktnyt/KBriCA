@@ -2,6 +2,7 @@
 #define __KBRICA_FUNCTOR_COMPONENT_HPP__
 
 #include "kbrica/functor.hpp"
+#include "kbrica/shared_vector.hpp"
 
 #include "mpi.h"
 
