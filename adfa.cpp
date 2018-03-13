@@ -224,6 +224,11 @@ int main(int argc, char* argv[]) {
 
     if (rank == 0) {
       std::cerr << std::endl;
+    }
+
+    MPI_Barrier(MPI_COMM_WORLD);
+
+    if (rank == 0) {
       std::cout << "Train\t L0 Loss: " << std::setprecision(7)
                 << layer0.loss / layer0.count << std::endl;
       layer0.loss = 0.0;
