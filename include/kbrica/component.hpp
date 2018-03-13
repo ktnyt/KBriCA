@@ -6,6 +6,8 @@
 
 #include "mpi.h"
 
+#include <iostream>
+
 namespace kbrica {
 
 class Component {
@@ -48,10 +50,18 @@ class Component {
     }
   }
 
-  void connect(std::vector<Component*> sources) {
-    for (std::size_t i = 0; i < sources.size(); ++i) {
-      addConnection(sources[i]);
-    }
+  template <class... Args>
+  void connect(Args...);
+
+  template <class Head>
+  void connect(Head h) {
+    addConnection(h);
+  }
+
+  template <class Head, class... Tail>
+  void connect(Head h, Tail... t) {
+    addConnection(h);
+    connect<Tail...>(t...);
   }
 
   void addConnection(Component* source) {
@@ -68,8 +78,15 @@ class Component {
 
   void wait() { MPI_Wait(&request, &status); }
 
-  const Buffer getInput(std::size_t i) { return inputs[i]; }
+  const Buffer getInput(std::size_t i) const { return inputs[i]; }
+  void setInput(std::size_t i, Buffer buffer) {
+    if (inputs.size() < (i + 1)) {
+      inputs.resize(i + 1);
+    }
+    inputs[i] = buffer;
+  }
   const Buffer getOutput() const { return output; }
+  void setOutput(Buffer buffer) { output = buffer; }
 
  private:
   Functor& f;
