@@ -52,75 +52,203 @@ MatrixXf linear(MatrixXf& x, MatrixXf& W, VectorXf& b) {
   return a;
 }
 
-class Layer : public Functor {
+class DFALayer : public Functor {
+  static constexpr float epsilon = std::numeric_limits<float>::epsilon();
+
  public:
-  Layer(std::size_t n_input, std::size_t n_output, float lr = 0.05)
+  DFALayer(std::size_t n_input, std::size_t n_output, std::size_t n_final,
+           float lr, float ae, float decay)
       : W(n_input, n_output),
         U(n_output, n_input),
+        B(n_final, n_output),
         b(VectorXf::Zero(n_output)),
         c(VectorXf::Zero(n_input)),
         lr(lr),
+        ae(ae),
+        decay(decay),
         loss(0.0),
         count(0) {
     float stdW = 1. / sqrt(static_cast<float>(n_input));
     float stdU = 1. / sqrt(static_cast<float>(n_output));
+    float stdB = 1. / sqrt(static_cast<float>(n_final));
 
     std::default_random_engine engine(seed_gen());
 
     std::normal_distribution<float> genW(0.0, stdW);
     std::normal_distribution<float> genU(0.0, stdU);
+    std::normal_distribution<float> genB(0.0, stdB);
 
-    for (int i = 0; i < n_input; ++i) {
-      for (int j = 0; j < n_output; ++j) {
+    for (int j = 0; j < n_output; ++j) {
+      for (int i = 0; i < n_input; ++i) {
         W(i, j) = genW(engine);
         U(j, i) = genU(engine);
+      }
+      for (int i = 0; i < n_final; ++i) {
+        B(i, j) = genB(engine);
       }
     }
   }
 
   Buffer operator()(std::vector<Buffer>& inputs) {
-    if (inputs.empty() || inputs[0].empty()) {
-      return Buffer();
+    Buffer ret;
+
+    if (inputs[0].size()) {
+      MatrixXf x = matrixFromBuffer(inputs[0]);
+      MatrixXf y = linear(x, W, b).unaryExpr(&sigmoid);
+
+      xs.push(x);
+      ys.push(y);
+
+      ret = bufferFromMatrix(y);
+
+      if (ae > epsilon) {
+        MatrixXf z = linear(y, U, c).unaryExpr(&sigmoid);
+
+        MatrixXf d_z = z - x;
+        MatrixXf d_y =
+            (d_z * U.transpose()).array() * y.unaryExpr(&dsigmoid).array();
+
+        MatrixXf d_W = -x.transpose() * d_y;
+        MatrixXf d_U = -y.transpose() * d_z;
+
+        W += d_W * ae;
+        U += d_U * ae;
+
+        for (int i = 0; i < d_y.cols(); ++i) {
+          b(i) += d_y.col(i).sum() * ae;
+        }
+
+        for (int i = 0; i < d_z.cols(); ++i) {
+          c(i) += d_z.col(i).sum() * ae;
+        }
+
+        ae *= decay;
+
+        loss += mean_squared_error(z, x);
+        ++count;
+      }
     }
 
-    MatrixXf x = matrixFromBuffer(inputs[0]);
-    MatrixXf y = linear(x, W, b).unaryExpr(&sigmoid);
-    MatrixXf z = linear(y, U, c).unaryExpr(&sigmoid);
+    if (inputs[1].size()) {
+      MatrixXf x = xs.front();
+      MatrixXf y = ys.front();
+      xs.pop();
+      ys.pop();
 
-    MatrixXf d_z = z - x;
-    MatrixXf d_y =
-        (d_z * U.transpose()).array() * y.unaryExpr(&dsigmoid).array();
-
-    MatrixXf d_W = -x.transpose() * d_y;
-    MatrixXf d_U = -y.transpose() * d_z;
-
-    W += d_W * lr;
-    U += d_U * lr;
-
-    for (int i = 0; i < d_y.cols(); ++i) {
-      b(i) += d_y.col(i).sum() * lr;
+      MatrixXf e = matrixFromBuffer(inputs[1]);
+      MatrixXf d_y = e * B;
+      MatrixXf d_x = d_y.array() * y.unaryExpr(&dsigmoid).array();
+      MatrixXf d_W = -x.transpose() * d_x;
+      W += d_W * lr;
+      for (int i = 0; i < d_x.cols(); ++i) {
+        b(i) += d_x.col(i).sum() * lr;
+      }
     }
 
-    for (int i = 0; i < d_z.cols(); ++i) {
-      c(i) += d_z.col(i).sum() * lr;
-    }
-
-    loss += mean_squared_error(z, x);
-    ++count;
-
-    return bufferFromMatrix(y);
+    return ret;
   }
 
  private:
   MatrixXf W;
   MatrixXf U;
+  MatrixXf B;
   VectorXf b;
   VectorXf c;
   float lr;
+  float ae;
+  float decay;
+  std::queue<MatrixXf> xs;
+  std::queue<MatrixXf> ys;
 
  public:
   float loss;
   std::size_t count;
+};
+
+class OutLayer : public Functor {
+ public:
+  OutLayer(std::size_t n_input, std::size_t n_output, float lr)
+      : W(n_input, n_output),
+        b(VectorXf::Zero(n_output)),
+        lr(lr),
+        loss(0.0),
+        acc(0.0),
+        count(0) {
+    float stdW = 1. / sqrt(static_cast<float>(n_input));
+
+    std::default_random_engine engine(seed_gen());
+
+    std::normal_distribution<float> genW(0.0, stdW);
+
+    for (int i = 0; i < n_input; ++i) {
+      for (int j = 0; j < n_output; ++j) {
+        W(i, j) = genW(engine);
+      }
+    }
+  }
+
+  Buffer operator()(std::vector<Buffer>& inputs) {
+    Buffer ret;
+
+    if (inputs[0].size()) {
+      MatrixXf x = matrixFromBuffer(inputs[0]);
+      MatrixXf y = linear(x, W, b);
+      for (std::size_t i = 0; i < y.rows(); ++i) {
+        y.row(i) = softmax(y.row(i));
+      }
+
+      xs.push(x);
+      ys.push(y);
+    }
+
+    if (inputs[1].size()) {
+      MatrixXf t = matrixFromBuffer(inputs[1]);
+      ts.push(t);
+    }
+
+    if (xs.size() && ys.size() && ts.size()) {
+      MatrixXf x = xs.front();
+      MatrixXf y = ys.front();
+      MatrixXf t = ts.front();
+      xs.pop();
+      ys.pop();
+      ts.pop();
+
+      loss += cross_entropy(t, y);
+      acc += accuracy(t, y);
+      ++count;
+
+      MatrixXf d_y = t - y;
+      MatrixXf d_W = -x.transpose() * d_y;
+      W += d_W * lr;
+
+      for (int i = 0; i < d_y.cols(); ++i) {
+        // b(i) += d_y.col(i).sum() * lr;
+      }
+
+      ret = bufferFromMatrix(d_y);
+    }
+
+    return ret;
+  }
+
+ private:
+  MatrixXf W;
+  VectorXf b;
+  float lr;
+  std::queue<MatrixXf> xs;
+  std::queue<MatrixXf> ys;
+  std::queue<MatrixXf> ts;
+
+ public:
+  float loss;
+  float acc;
+  std::size_t count;
+};
+
+class Pipe : public Functor {
+ public:
+  Buffer operator()(std::vector<Buffer>& inputs) { return inputs[0]; }
 };
 
 int main(int argc, char* argv[]) {
@@ -176,24 +304,31 @@ int main(int argc, char* argv[]) {
   std::size_t batchsize = 100;
   std::size_t n_hidden = 480;
 
-  Layer layer0(x_shape, n_hidden);
-  Layer layer1(n_hidden, n_hidden);
-  Layer layer2(n_hidden, n_hidden);
-  Layer layer3(n_hidden, n_hidden);
+  Pipe pipe;
 
+  DFALayer layer0(x_shape, n_hidden, 10, 0.01, 0.01, 0.9995);
+  DFALayer layer1(n_hidden, n_hidden, 10, 0.01, 0.01, 0.9995);
+  DFALayer layer2(n_hidden, n_hidden, 10, 0.01, 0.01, 0.9995);
+  OutLayer layer3(x_shape, 10, 0.01);
+
+  Component image_pipe(pipe, 0);
+  Component label_pipe(pipe, 3);
   Component component0(layer0, 0);
   Component component1(layer1, 1);
   Component component2(layer2, 2);
   Component component3(layer3, 3);
 
-  component1.connect(&component0);
-  component2.connect(&component1);
-  component3.connect(&component2);
+  // component0.connect(&image_pipe, &component3);
+  // component1.connect(&component0, &component3);
+  // component2.connect(&component1, &component3);
+  component3.connect(&image_pipe, &label_pipe);
 
   VTSScheduler s;
-  s.addComponent(&component0);
-  s.addComponent(&component1);
-  s.addComponent(&component2);
+  s.addComponent(&image_pipe);
+  s.addComponent(&label_pipe);
+  // s.addComponent(&component0);
+  // s.addComponent(&component1);
+  // s.addComponent(&component2);
   s.addComponent(&component3);
 
   for (std::size_t epoch = 0; epoch < n_epoch; ++epoch) {
@@ -204,20 +339,21 @@ int main(int argc, char* argv[]) {
     for (std::size_t batchnum = 0; batchnum < N_train; batchnum += batchsize) {
       if (rank == 0) {
         if ((batchnum + batchsize) % 800 == 0) std::cerr << "#";
-
-        std::vector<std::size_t> indices(perm.begin() + batchnum,
-                                         perm.begin() + batchnum + batchsize);
-
-        MatrixXf x(batchsize, x_shape);
-        MatrixXf t(batchsize, y_shape);
-
-        for (std::size_t i = 0; i < batchsize; ++i) {
-          x.row(i) = x_train.row(indices[i]);
-          t.row(i) = y_train.row(indices[i]);
-        }
-
-        component0.setInput(0, bufferFromMatrix(x));
       }
+
+      std::vector<std::size_t> indices(perm.begin() + batchnum,
+                                       perm.begin() + batchnum + batchsize);
+
+      MatrixXf x(batchsize, x_shape);
+      MatrixXf t(batchsize, y_shape);
+
+      for (std::size_t i = 0; i < batchsize; ++i) {
+        x.row(i) = x_train.row(indices[i]);
+        t.row(i) = y_train.row(indices[i]);
+      }
+
+      image_pipe.setInput(0, bufferFromMatrix(x));
+      label_pipe.setInput(0, bufferFromMatrix(t));
 
       s.step();
     }
@@ -257,8 +393,10 @@ int main(int argc, char* argv[]) {
 
     if (rank == 3) {
       std::cout << "Train\t L3 Loss: " << std::setprecision(7)
-                << layer3.loss / layer3.count << std::endl;
+                << layer3.loss / layer3.count
+                << " Accuracy: " << layer3.acc / layer3.count << std::endl;
       layer3.loss = 0.0;
+      layer3.acc = 0.0;
       layer3.count = 0;
     }
   }
