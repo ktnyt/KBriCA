@@ -69,19 +69,16 @@ class DFALayer : public Functor {
         loss(0.0),
         count(0) {
     float stdW = 1. / sqrt(static_cast<float>(n_input));
-    float stdU = 1. / sqrt(static_cast<float>(n_output));
-    float stdB = 1. / sqrt(static_cast<float>(n_final));
+    float stdB = 1. / sqrt(static_cast<float>(n_output));
 
     std::default_random_engine engine(seed_gen());
 
-    std::normal_distribution<float> genW(0.0, stdW);
-    std::normal_distribution<float> genU(0.0, stdU);
-    std::normal_distribution<float> genB(0.0, stdB);
+    std::uniform_real_distribution<float> genW(-stdW, stdW);
+    std::uniform_real_distribution<float> genB(-stdB, stdB);
 
     for (int j = 0; j < n_output; ++j) {
       for (int i = 0; i < n_input; ++i) {
         W(i, j) = genW(engine);
-        U(j, i) = genU(engine);
       }
       for (int i = 0; i < n_final; ++i) {
         B(i, j) = genB(engine);
@@ -102,24 +99,22 @@ class DFALayer : public Functor {
       ret = bufferFromMatrix(y);
 
       if (ae > epsilon) {
+        MatrixXf U = W.transpose();
         MatrixXf z = linear(y, U, c).unaryExpr(&sigmoid);
 
         MatrixXf d_z = z - x;
-        MatrixXf d_y =
-            (d_z * U.transpose()).array() * y.unaryExpr(&dsigmoid).array();
+        MatrixXf d_y = (d_z * W).array() * y.unaryExpr(&dsigmoid).array();
 
-        MatrixXf d_W = -x.transpose() * d_y;
-        MatrixXf d_U = -y.transpose() * d_z;
+        MatrixXf d_W = -(x.transpose() * d_y + d_z.transpose() * y);
 
-        W += d_W * ae;
-        U += d_U * ae;
+        // W += d_W * ae;
 
         for (int i = 0; i < d_y.cols(); ++i) {
-          b(i) += d_y.col(i).sum() * ae;
+          // b(i) += d_y.col(i).sum() * ae;
         }
 
         for (int i = 0; i < d_z.cols(); ++i) {
-          c(i) += d_z.col(i).sum() * ae;
+          // c(i) += d_z.col(i).sum() * ae;
         }
 
         ae *= decay;
@@ -141,7 +136,7 @@ class DFALayer : public Functor {
       MatrixXf d_W = -x.transpose() * d_x;
       W += d_W * lr;
       for (int i = 0; i < d_x.cols(); ++i) {
-        b(i) += d_x.col(i).sum() * lr;
+        // b(i) += d_x.col(i).sum() * lr;
       }
     }
 
@@ -178,7 +173,7 @@ class OutLayer : public Functor {
 
     std::default_random_engine engine(seed_gen());
 
-    std::normal_distribution<float> genW(0.0, stdW);
+    std::uniform_real_distribution<float> genW(-stdW, stdW);
 
     for (int i = 0; i < n_input; ++i) {
       for (int j = 0; j < n_output; ++j) {
@@ -192,10 +187,10 @@ class OutLayer : public Functor {
 
     if (inputs[0].size()) {
       MatrixXf x = matrixFromBuffer(inputs[0]);
-      MatrixXf y = linear(x, W, b);
-      for (std::size_t i = 0; i < y.rows(); ++i) {
-        y.row(i) = softmax(y.row(i));
-      }
+      MatrixXf y = linear(x, W, b).unaryExpr(&sigmoid);
+      // for (std::size_t i = 0; i < y.rows(); ++i) {
+      //   y.row(i) = softmax(y.row(i));
+      // }
 
       xs.push(x);
       ys.push(y);
@@ -218,7 +213,7 @@ class OutLayer : public Functor {
       acc += accuracy(t, y);
       ++count;
 
-      MatrixXf d_y = t - y;
+      MatrixXf d_y = y - t;
       MatrixXf d_W = -x.transpose() * d_y;
       W += d_W * lr;
 
@@ -309,24 +304,24 @@ int main(int argc, char* argv[]) {
   DFALayer layer0(x_shape, n_hidden, 10, 0.01, 0.01, 0.9995);
   DFALayer layer1(n_hidden, n_hidden, 10, 0.01, 0.01, 0.9995);
   DFALayer layer2(n_hidden, n_hidden, 10, 0.01, 0.01, 0.9995);
-  OutLayer layer3(x_shape, 10, 0.01);
+  OutLayer layer3(n_hidden, 10, 0.01);
 
   Component image_pipe(pipe, 0);
-  Component label_pipe(pipe, 3);
+  Component label_pipe(pipe, 0);
   Component component0(layer0, 0);
   Component component1(layer1, 1);
   Component component2(layer2, 2);
   Component component3(layer3, 3);
 
-  // component0.connect(&image_pipe, &component3);
+  component0.connect(&image_pipe, &component3);
   // component1.connect(&component0, &component3);
   // component2.connect(&component1, &component3);
-  component3.connect(&image_pipe, &label_pipe);
+  component3.connect(&component0, &label_pipe);
 
   VTSScheduler s;
   s.addComponent(&image_pipe);
   s.addComponent(&label_pipe);
-  // s.addComponent(&component0);
+  s.addComponent(&component0);
   // s.addComponent(&component1);
   // s.addComponent(&component2);
   s.addComponent(&component3);

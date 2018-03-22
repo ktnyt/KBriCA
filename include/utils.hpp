@@ -24,7 +24,7 @@ float accuracy(Eigen::MatrixXf y, Eigen::MatrixXf t) {
       total += 1.0;
     }
   }
-  return total / y.rows();
+  return total / static_cast<float>(y.rows());
 }
 
 float cross_entropy(Eigen::MatrixXf y, Eigen::MatrixXf t) {
