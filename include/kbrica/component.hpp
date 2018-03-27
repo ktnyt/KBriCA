@@ -40,7 +40,7 @@ class Component {
 
       if (wanted != actual && targets[i] == actual) {
         MPI_Recv(&size, 1, MPI_INT, wanted, tag, MPI_COMM_WORLD, &status);
-        output = Buffer(size);
+        output.resize(size);
         MPI_Recv(output.data(), output.size(), MPI_CHAR, wanted, tag,
                  MPI_COMM_WORLD, &status);
       }
@@ -49,11 +49,11 @@ class Component {
 
   void connect(std::vector<Component*> sources) {
     for (std::size_t i = 0; i < sources.size(); ++i) {
-      addConnection(sources[i]);
+      connect(sources[i]);
     }
   }
 
-  void addConnection(Component* source) {
+  void connect(Component* source) {
     connected.push_back(source);
     source->addTarget(wanted);
     inputs = std::vector<Buffer>(connected.size());
@@ -67,8 +67,15 @@ class Component {
 
   void wait() { MPI_Wait(&request, &status); }
 
-  const Buffer getInput(std::size_t i) { return inputs[i]; }
+  const Buffer getInput(std::size_t i) const { return inputs[i]; }
+  void setInput(std::size_t i, Buffer buffer) {
+    if (inputs.size() < (i + 1)) {
+      inputs.resize(i + 1);
+    }
+    inputs[i] = buffer;
+  }
   const Buffer getOutput() const { return output; }
+  void setOutput(Buffer buffer) { output = buffer; }
 
  private:
   Functor& f;
