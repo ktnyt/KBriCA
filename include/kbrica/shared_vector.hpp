@@ -25,6 +25,7 @@ class SharedVector {
       count_ = other.count_;
       ++*count_;
     }
+    return *this;
   }
 
   std::size_t size() const { return size_; }
