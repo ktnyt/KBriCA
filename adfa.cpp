@@ -253,8 +253,8 @@ int reverse_int(int i) {
          (static_cast<int>(i2) << 8) + static_cast<int>(i3);
 }
 
-void read_image(const char* path,
-                std::vector<std::vector<unsigned char> >& array) {
+std::vector<std::vector<unsigned char> > read_image(const char* path) {
+  std::vector<std::vector<unsigned char> > array;
   std::ifstream file(path, std::ios::binary);
   if (file.is_open()) {
     int magic_number;
@@ -269,8 +269,9 @@ void read_image(const char* path,
     n_rows = reverse_int(n_rows);
     file.read(reinterpret_cast<char*>(&n_cols), sizeof(n_cols));
     n_cols = reverse_int(n_cols);
-    array.resize(n_images, std::vector<unsigned char>(n_rows * n_cols));
+    array.resize(n_images);
     for (int i = 0; i < n_images; ++i) {
+      array[i].resize(n_rows * n_cols);
       for (int r = 0; r < n_rows; ++r) {
         for (int c = 0; c < n_cols; ++c) {
           unsigned char tmp;
@@ -280,9 +281,11 @@ void read_image(const char* path,
       }
     }
   }
+  return array;
 };
 
-void read_label(const char* path, std::vector<unsigned char>& array) {
+std::vector<unsigned char> read_label(const char* path) {
+  std::vector<unsigned char> array;
   std::ifstream file(path, std::ios::binary);
   if (file.is_open()) {
     int magic_number;
@@ -298,6 +301,7 @@ void read_label(const char* path, std::vector<unsigned char>& array) {
       array[i] = tmp;
     }
   }
+  return array;
 }
 
 int main(int argc, char* argv[]) {
@@ -310,14 +314,14 @@ int main(int argc, char* argv[]) {
   std::cerr << "Load MNIST train data" << std::endl;
   std::vector<std::vector<unsigned char> > train_images;
   std::vector<unsigned char> train_labels;
-  read_image("mnist/train-images-idx3-ubyte", train_images);
-  read_label("mnist/train-labels-idx1-ubyte", train_labels);
+  train_images = read_image("mnist/train-images-idx3-ubyte");
+  train_labels = read_label("mnist/train-labels-idx1-ubyte");
 
   std::cerr << "Load MNIST test data" << std::endl;
   std::vector<std::vector<unsigned char> > test_images;
   std::vector<unsigned char> test_labels;
-  read_image("mnist/t10k-images-idx3-ubyte", test_images);
-  read_label("mnist/t10k-labels-idx1-ubyte", test_labels);
+  test_images = read_image("mnist/t10k-images-idx3-ubyte");
+  test_labels = read_label("mnist/t10k-labels-idx1-ubyte");
 
   std::cerr << "Gather data info" << std::endl;
   std::size_t N_train = train_images.size();
