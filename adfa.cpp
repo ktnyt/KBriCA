@@ -331,20 +331,31 @@ int main(int argc, char* argv[]) {
   std::cerr << "Initialize MPI" << std::endl;
   MPI_Init(&argc, &argv);
 
-  int rank;
+  int rank, size;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+  MPI_Comm_size(MPI_COMM_WORLD, &size);
 
   std::cerr << "Load MNIST train data" << std::endl;
   std::vector<std::vector<unsigned char> > train_images;
   std::vector<unsigned char> train_labels;
-  train_images = read_image("mnist/train-images-idx3-ubyte");
-  train_labels = read_label("mnist/train-labels-idx1-ubyte");
+  for (int i = 0; i < size; ++i) {
+    if (rank == i) {
+      train_images = read_image("mnist/train-images-idx3-ubyte");
+      train_labels = read_label("mnist/train-labels-idx1-ubyte");
+    }
+    MPI_Barrier(MPI_COMM_WORLD);
+  }
 
   std::cerr << "Load MNIST test data" << std::endl;
   std::vector<std::vector<unsigned char> > test_images;
   std::vector<unsigned char> test_labels;
-  test_images = read_image("mnist/t10k-images-idx3-ubyte");
-  test_labels = read_label("mnist/t10k-labels-idx1-ubyte");
+  for (int i = 0; i < size; ++i) {
+    if (rank == i) {
+      test_images = read_image("mnist/t10k-images-idx3-ubyte");
+      test_labels = read_label("mnist/t10k-labels-idx1-ubyte");
+    }
+    MPI_Barrier(MPI_COMM_WORLD);
+  }
 
   std::cerr << "Gather data info" << std::endl;
   std::size_t N_train = train_images.size();
