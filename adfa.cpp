@@ -256,19 +256,32 @@ int reverse_int(int i) {
 std::vector<std::vector<unsigned char> > read_image(const char* path) {
   std::vector<std::vector<unsigned char> > array;
   std::ifstream file(path, std::ios::binary);
+  bool reverse = false;
   if (file.is_open()) {
     int magic_number;
     int n_images;
     int n_rows;
     int n_cols;
     file.read(reinterpret_cast<char*>(&magic_number), sizeof(magic_number));
-    magic_number = reverse_int(magic_number);
+    if (magic_number != 2051) {
+      if (reverse_int(magic_number) != 2051) {
+        return array;
+      }
+      magic_number = reverse_int(magic_number);
+      reverse = true;
+    }
     file.read(reinterpret_cast<char*>(&n_images), sizeof(n_images));
-    n_images = reverse_int(n_images);
+    if (reverse) {
+      n_images = reverse_int(n_images);
+    }
     file.read(reinterpret_cast<char*>(&n_rows), sizeof(n_rows));
-    n_rows = reverse_int(n_rows);
+    if (reverse) {
+      n_rows = reverse_int(n_rows);
+    }
     file.read(reinterpret_cast<char*>(&n_cols), sizeof(n_cols));
-    n_cols = reverse_int(n_cols);
+    if (reverse) {
+      n_cols = reverse_int(n_cols);
+    }
     array.resize(n_images);
     for (int i = 0; i < n_images; ++i) {
       array[i].resize(n_rows * n_cols);
