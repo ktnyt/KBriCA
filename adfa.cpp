@@ -19,6 +19,24 @@
 using namespace Eigen;
 using namespace kbrica;
 
+class Timer {
+ public:
+  Timer() { reset(); }
+
+  void reset() { clock_gettime(CLOCK_MONOTONIC, &ref); }
+
+  int elapsed() {
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    int sec = now.tv_sec - ref.tv_sec;
+    int nsec = now.tv_nsec - ref.tv_nsec;
+    return (sec * 1000 * 1000) + (nsec / 1000);
+  }
+
+ private:
+  struct timespec ref;
+  struct timespec now;
+};
+
 Buffer bufferFromMatrix(MatrixXf& m) {
   std::size_t head_size = 2 * sizeof(std::size_t);
   std::size_t data_size = m.size() * sizeof(float);
@@ -381,6 +399,8 @@ int main(int argc, char* argv[]) {
   std::size_t batchsize = 100;
   std::size_t n_hidden = 480;
 
+  Timer timer;
+
   for (int n_procs = 1; n_procs < size; ++n_procs) {
     Pipe pipe;
 
@@ -393,36 +413,35 @@ int main(int argc, char* argv[]) {
     }
     OutLayer output_layer(n_hidden, 10, 0.01);
 
-    std::vector<Component> components;
-    Component image_pipe(pipe, 0);
-    Component label_pipe(pipe, n_procs);
-    Component input_component(hidden_layers[0], 0);
-    Component output_component(output_layer, n_procs);
+    std::vector<Component*> components;
+    Component* image_pipe = new Component(pipe, 0);
+    Component* label_pipe = new Component(pipe, n_procs);
+    Component* input_component = new Component(hidden_layers[0], 0);
+    Component* output_component = new Component(output_layer, n_procs);
 
-    input_component.connect(&image_pipe);
-    input_component.connect(&output_component);
+    input_component->connect(image_pipe);
+    input_component->connect(output_component);
 
     components.push_back(input_component);
 
     for (int i = 1; i < n_procs - 1; ++i) {
-      Component component(hidden_layers[i], i);
+      Component* component = new Component(hidden_layers[i], i);
       components.push_back(component);
 
-      component.connect(&components[i - 1]);
-      component.connect(&output_component);
+      component->connect(components[i - 1]);
+      component->connect(output_component);
     }
 
-    output_component.connect(&components.back());
-    output_component.connect(&label_pipe);
+    output_component->connect(components.back());
+    output_component->connect(label_pipe);
 
     components.push_back(output_component);
 
-    VTSScheduler s;
-    for (int i = 0; i < components.size(); ++i) {
-      s.addComponent(&components[i]);
-    }
+    VTSScheduler s(components);
 
     MT19937 rng;
+
+    timer.reset();
 
     for (std::size_t epoch = 0; epoch < n_epoch; ++epoch) {
       if (rank == 0) {
@@ -443,8 +462,8 @@ int main(int argc, char* argv[]) {
             t.row(i) = y_train.row(perm[batchnum + i]);
           }
 
-          image_pipe.setInput(0, bufferFromMatrix(x));
-          label_pipe.setInput(0, bufferFromMatrix(t));
+          image_pipe->setInput(0, bufferFromMatrix(x));
+          label_pipe->setInput(0, bufferFromMatrix(t));
         }
 
         s.step();
@@ -460,7 +479,7 @@ int main(int argc, char* argv[]) {
 
       for (int i = 0; i < hidden_layers.size(); ++i) {
         if (rank == i) {
-          std::cout << "Train\tLayer " << i << "\t"
+          std::cerr << "Train\tLayer " << i << "\t"
                     << "Loss: " << std::setprecision(7)
                     << hidden_layers[i].loss / hidden_layers[i].count
                     << std::endl;
@@ -471,7 +490,7 @@ int main(int argc, char* argv[]) {
       }
 
       if (rank == size - 1) {
-        std::cout << "Train\t L3 Loss: " << std::setprecision(7)
+        std::cerr << "Train\t L3 Loss: " << std::setprecision(7)
                   << output_layer.loss / output_layer.count
                   << " Accuracy: " << output_layer.acc / output_layer.count
                   << std::endl;
@@ -479,6 +498,12 @@ int main(int argc, char* argv[]) {
         output_layer.acc = 0.0;
         output_layer.count = 0;
       }
+    }
+
+    std::cout << n_procs << "\t" << timer.elapsed() << std::endl;
+
+    for (int i = 0; i < components.size(); ++i) {
+      delete components[i];
     }
   }
 
