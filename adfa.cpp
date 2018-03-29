@@ -303,7 +303,7 @@ std::vector<unsigned char> read_label(const char* path) {
   if (file.is_open()) {
     int magic_number;
     int n_labels;
-    bool reverse = true;
+    bool reverse = false;
     file.read(reinterpret_cast<char*>(&magic_number), sizeof(magic_number));
     if (magic_number != 2049) {
       if (reverse_int(magic_number) != 2049) {
