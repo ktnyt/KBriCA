@@ -328,49 +328,33 @@ std::vector<unsigned char> read_label(const char* path) {
 }
 
 int main(int argc, char* argv[]) {
-  std::cerr << "Initialize MPI" << std::endl;
   MPI_Init(&argc, &argv);
 
   int rank, size;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-  std::cerr << "Load MNIST train data" << std::endl;
   std::vector<std::vector<unsigned char> > train_images;
   std::vector<unsigned char> train_labels;
-  for (int i = 0; i < size; ++i) {
-    if (rank == i) {
-      train_images = read_image("mnist/train-images-idx3-ubyte");
-      train_labels = read_label("mnist/train-labels-idx1-ubyte");
-    }
-    MPI_Barrier(MPI_COMM_WORLD);
-  }
+  train_images = read_image("mnist/train-images-idx3-ubyte");
+  train_labels = read_label("mnist/train-labels-idx1-ubyte");
 
-  std::cerr << "Load MNIST test data" << std::endl;
   std::vector<std::vector<unsigned char> > test_images;
   std::vector<unsigned char> test_labels;
-  for (int i = 0; i < size; ++i) {
-    if (rank == i) {
-      test_images = read_image("mnist/t10k-images-idx3-ubyte");
-      test_labels = read_label("mnist/t10k-labels-idx1-ubyte");
-    }
-    MPI_Barrier(MPI_COMM_WORLD);
-  }
+  test_images = read_image("mnist/t10k-images-idx3-ubyte");
+  test_labels = read_label("mnist/t10k-labels-idx1-ubyte");
 
-  std::cerr << "Gather data info" << std::endl;
   std::size_t N_train = train_images.size();
   std::size_t N_test = test_images.size();
   std::size_t x_shape = train_images[0].size();
   std::size_t y_shape = 10;
 
-  std::cerr << "Prepare data matrices" << std::endl;
   MatrixXf x_train(N_train, x_shape);
   MatrixXf y_train(N_train, y_shape);
 
   MatrixXf x_test(N_test, x_shape);
   MatrixXf y_test(N_test, y_shape);
 
-  std::cerr << "Set data to matrices" << std::endl;
   for (std::size_t i = 0; i < N_train; ++i) {
     for (std::size_t j = 0; j < x_shape; ++j) {
       x_train(i, j) = static_cast<float>(train_images[i][j]) / 255.0;
@@ -388,122 +372,113 @@ int main(int argc, char* argv[]) {
     }
   }
 
-  std::cerr << "Create permutation" << std::endl;
   std::size_t* perm = new std::size_t[N_train];
   for (std::size_t i = 0; i < N_train; ++i) {
     perm[i] = i;
   }
 
-  std::cerr << "Set training parameters" << std::endl;
   std::size_t n_epoch = 20;
   std::size_t batchsize = 100;
   std::size_t n_hidden = 480;
 
-  std::cerr << "Setup functors" << std::endl;
-  Pipe pipe;
+  for (int n_procs = 1; n_procs < size; ++n_procs) {
+    Pipe pipe;
 
-  DFALayer layer0(x_shape, n_hidden, 10, 0.01, 0.001, 0.9995);
-  DFALayer layer1(n_hidden, n_hidden, 10, 0.01, 0.001, 0.9995);
-  DFALayer layer2(n_hidden, n_hidden, 10, 0.01, 0.001, 0.9995);
-  OutLayer layer3(n_hidden, 10, 0.01);
+    std::vector<DFALayer> hidden_layers;
+    DFALayer layer(x_shape, n_hidden, 10, 0.01, 0.001, 0.9995);
+    hidden_layers.push_back(layer);
+    for (int i = 1; i < n_procs - 1; ++i) {
+      DFALayer layer(n_hidden, n_hidden, 10, 0.01, 0.001, 0.9995);
+      hidden_layers.push_back(layer);
+    }
+    OutLayer output_layer(n_hidden, 10, 0.01);
 
-  std::cerr << "Setup components" << std::endl;
-  Component image_pipe(pipe, 0);
-  Component label_pipe(pipe, 0);
-  Component component0(layer0, 0);
-  Component component1(layer1, 1);
-  Component component2(layer2, 2);
-  Component component3(layer3, 3);
+    std::vector<Component> components;
+    Component image_pipe(pipe, 0);
+    Component label_pipe(pipe, n_procs);
+    Component input_component(hidden_layers[0], 0);
+    Component output_component(output_layer, n_procs);
 
-  std::cerr << "Connect components" << std::endl;
-  component0.connect(&image_pipe);
-  component0.connect(&component3);
-  component1.connect(&component0);
-  component1.connect(&component3);
-  component2.connect(&component1);
-  component2.connect(&component3);
-  component3.connect(&component2);
-  component3.connect(&label_pipe);
+    input_component.connect(&image_pipe);
+    input_component.connect(&output_component);
 
-  std::cerr << "Setup scheduler" << std::endl;
-  VTSScheduler s;
-  s.addComponent(&image_pipe);
-  s.addComponent(&label_pipe);
-  s.addComponent(&component0);
-  s.addComponent(&component1);
-  s.addComponent(&component2);
-  s.addComponent(&component3);
+    components.push_back(input_component);
 
-  MT19937 rng;
+    for (int i = 1; i < n_procs - 1; ++i) {
+      Component component(hidden_layers[i], i);
+      components.push_back(component);
 
-  std::cerr << "Start training loop" << std::endl;
-  for (std::size_t epoch = 0; epoch < n_epoch; ++epoch) {
-    if (rank == 0) {
-      std::cerr << "Epoch: " << epoch << std::endl;
-      shuffle(perm, perm + N_train, rng);
+      component.connect(&components[i - 1]);
+      component.connect(&output_component);
     }
 
-    for (std::size_t batchnum = 0; batchnum < N_train; batchnum += batchsize) {
+    output_component.connect(&components.back());
+    output_component.connect(&label_pipe);
+
+    components.push_back(output_component);
+
+    VTSScheduler s;
+    for (int i = 0; i < components.size(); ++i) {
+      s.addComponent(&components[i]);
+    }
+
+    MT19937 rng;
+
+    for (std::size_t epoch = 0; epoch < n_epoch; ++epoch) {
       if (rank == 0) {
-        if ((batchnum + batchsize) % 800 == 0) std::cerr << "#";
-
-        MatrixXf x(batchsize, x_shape);
-        MatrixXf t(batchsize, y_shape);
-
-        for (std::size_t i = 0; i < batchsize; ++i) {
-          x.row(i) = x_train.row(perm[batchnum + i]);
-          t.row(i) = y_train.row(perm[batchnum + i]);
-        }
-
-        image_pipe.setInput(0, bufferFromMatrix(x));
-        label_pipe.setInput(0, bufferFromMatrix(t));
+        std::cerr << "Epoch: " << epoch << std::endl;
+        shuffle(perm, perm + N_train, rng);
       }
 
-      s.step();
-    }
+      for (std::size_t batchnum = 0; batchnum < N_train;
+           batchnum += batchsize) {
+        if (rank == 0) {
+          if ((batchnum + batchsize) % 800 == 0) std::cerr << "#";
 
-    MPI_Barrier(MPI_COMM_WORLD);
+          MatrixXf x(batchsize, x_shape);
+          MatrixXf t(batchsize, y_shape);
 
-    if (rank == 0) {
-      std::cerr << std::endl;
-    }
+          for (std::size_t i = 0; i < batchsize; ++i) {
+            x.row(i) = x_train.row(perm[batchnum + i]);
+            t.row(i) = y_train.row(perm[batchnum + i]);
+          }
 
-    MPI_Barrier(MPI_COMM_WORLD);
+          image_pipe.setInput(0, bufferFromMatrix(x));
+          label_pipe.setInput(0, bufferFromMatrix(t));
+        }
 
-    if (rank == 0) {
-      std::cout << "Train\t L0 Loss: " << std::setprecision(7)
-                << layer0.loss / layer0.count << std::endl;
-      layer0.loss = 0.0;
-      layer0.count = 0;
-    }
+        s.step();
+      }
 
-    MPI_Barrier(MPI_COMM_WORLD);
+      MPI_Barrier(MPI_COMM_WORLD);
 
-    if (rank == 1) {
-      std::cout << "Train\t L1 Loss: " << std::setprecision(7)
-                << layer1.loss / layer1.count << std::endl;
-      layer1.loss = 0.0;
-      layer1.count = 0;
-    }
+      if (rank == 0) {
+        std::cerr << std::endl;
+      }
 
-    MPI_Barrier(MPI_COMM_WORLD);
+      MPI_Barrier(MPI_COMM_WORLD);
 
-    if (rank == 2) {
-      std::cout << "Train\t L2 Loss: " << std::setprecision(7)
-                << layer2.loss / layer2.count << std::endl;
-      layer2.loss = 0.0;
-      layer2.count = 0;
-    }
+      for (int i = 0; i < hidden_layers.size(); ++i) {
+        if (rank == i) {
+          std::cout << "Train\tLayer " << i << "\t"
+                    << "Loss: " << std::setprecision(7)
+                    << hidden_layers[i].loss / hidden_layers[i].count
+                    << std::endl;
+          hidden_layers[i].loss = 0.0;
+          hidden_layers[i].count = 0;
+        }
+        MPI_Barrier(MPI_COMM_WORLD);
+      }
 
-    MPI_Barrier(MPI_COMM_WORLD);
-
-    if (rank == 3) {
-      std::cout << "Train\t L3 Loss: " << std::setprecision(7)
-                << layer3.loss / layer3.count
-                << " Accuracy: " << layer3.acc / layer3.count << std::endl;
-      layer3.loss = 0.0;
-      layer3.acc = 0.0;
-      layer3.count = 0;
+      if (rank == size - 1) {
+        std::cout << "Train\t L3 Loss: " << std::setprecision(7)
+                  << output_layer.loss / output_layer.count
+                  << " Accuracy: " << output_layer.acc / output_layer.count
+                  << std::endl;
+        output_layer.loss = 0.0;
+        output_layer.acc = 0.0;
+        output_layer.count = 0;
+      }
     }
   }
 
