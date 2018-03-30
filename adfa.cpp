@@ -402,6 +402,11 @@ int main(int argc, char* argv[]) {
   Timer timer;
 
   for (int n_procs = 1; n_procs < size; ++n_procs) {
+    int n = n_procs + 1;
+    if ((n & (n - 1)) != 0) {
+      continue;
+    }
+
     Pipe pipe;
 
     std::vector<DFALayer> hidden_layers;
@@ -415,7 +420,7 @@ int main(int argc, char* argv[]) {
 
     std::vector<Component*> components;
     Component* image_pipe = new Component(pipe, 0);
-    Component* label_pipe = new Component(pipe, n_procs);
+    Component* label_pipe = new Component(pipe, 0);
     Component* input_component = new Component(hidden_layers[0], 0);
     Component* output_component = new Component(output_layer, n_procs);
 
@@ -436,6 +441,9 @@ int main(int argc, char* argv[]) {
     output_component->connect(label_pipe);
 
     components.push_back(output_component);
+
+    components.push_back(image_pipe);
+    components.push_back(label_pipe);
 
     VTSScheduler s(components);
 
@@ -478,7 +486,7 @@ int main(int argc, char* argv[]) {
       MPI_Barrier(MPI_COMM_WORLD);
 
       for (int i = 0; i < hidden_layers.size(); ++i) {
-        if (rank == i) {
+        if (hidden_layers[i].count) {
           std::cerr << "Train\tLayer " << i << "\t"
                     << "Loss: " << std::setprecision(7)
                     << hidden_layers[i].loss / hidden_layers[i].count
@@ -489,8 +497,8 @@ int main(int argc, char* argv[]) {
         MPI_Barrier(MPI_COMM_WORLD);
       }
 
-      if (rank == size - 1) {
-        std::cerr << "Train\t L3 Loss: " << std::setprecision(7)
+      if (rank == n_procs - 1) {
+        std::cerr << "Train\t Output Loss: " << std::setprecision(7)
                   << output_layer.loss / output_layer.count
                   << " Accuracy: " << output_layer.acc / output_layer.count
                   << std::endl;
@@ -500,7 +508,10 @@ int main(int argc, char* argv[]) {
       }
     }
 
-    std::cout << n_procs << "\t" << timer.elapsed() << std::endl;
+    MPI_Barrier(MPI_COMM_WORLD);
+    if (rank == 0) {
+      std::cout << n_procs << "\t" << timer.elapsed() << std::endl;
+    }
 
     for (int i = 0; i < components.size(); ++i) {
       delete components[i];
