@@ -403,118 +403,125 @@ int main(int argc, char* argv[]) {
 
   for (int n_procs = 1; n_procs < size; ++n_procs) {
     int n = n_procs + 1;
-    if ((n & (n - 1)) != 0) {
+    if (n % 2 != 0) {
       continue;
     }
 
-    Pipe pipe;
+    int n_iter = 8;
+    int elapsed = 0;
 
-    std::vector<DFALayer> hidden_layers;
-    DFALayer layer(x_shape, n_hidden, 10, 0.01, 0.001, 0.9995);
-    hidden_layers.push_back(layer);
-    for (int i = 1; i < n_procs - 1; ++i) {
-      DFALayer layer(n_hidden, n_hidden, 10, 0.01, 0.001, 0.9995);
+    for (int iter = 0; iter < n_iter; ++iter) {
+      Pipe pipe;
+
+      std::vector<DFALayer> hidden_layers;
+      DFALayer layer(x_shape, n_hidden, 10, 0.01, 0.001, 0.9995);
       hidden_layers.push_back(layer);
-    }
-    OutLayer output_layer(n_hidden, 10, 0.01);
+      for (int i = 1; i < n_procs - 1; ++i) {
+        DFALayer layer(n_hidden, n_hidden, 10, 0.01, 0.001, 0.9995);
+        hidden_layers.push_back(layer);
+      }
+      OutLayer output_layer(n_hidden, 10, 0.01);
 
-    std::vector<Component*> components;
-    Component* image_pipe = new Component(pipe, 0);
-    Component* label_pipe = new Component(pipe, 0);
-    Component* input_component = new Component(hidden_layers[0], 0);
-    Component* output_component = new Component(output_layer, n_procs);
+      std::vector<Component*> components;
+      Component* image_pipe = new Component(pipe, 0);
+      Component* label_pipe = new Component(pipe, 0);
+      Component* input_component = new Component(hidden_layers[0], 0);
+      Component* output_component = new Component(output_layer, n_procs);
 
-    input_component->connect(image_pipe);
-    input_component->connect(output_component);
+      input_component->connect(image_pipe);
+      input_component->connect(output_component);
 
-    components.push_back(input_component);
+      components.push_back(input_component);
 
-    for (int i = 1; i < n_procs - 1; ++i) {
-      Component* component = new Component(hidden_layers[i], i);
-      components.push_back(component);
+      for (int i = 1; i < n_procs - 1; ++i) {
+        Component* component = new Component(hidden_layers[i], i);
+        components.push_back(component);
 
-      component->connect(components[i - 1]);
-      component->connect(output_component);
-    }
-
-    output_component->connect(components.back());
-    output_component->connect(label_pipe);
-
-    components.push_back(output_component);
-
-    components.push_back(image_pipe);
-    components.push_back(label_pipe);
-
-    VTSScheduler s(components);
-
-    MT19937 rng;
-
-    timer.reset();
-
-    for (std::size_t epoch = 0; epoch < n_epoch; ++epoch) {
-      if (rank == 0) {
-        std::cerr << "Epoch: " << epoch << std::endl;
-        shuffle(perm, perm + N_train, rng);
+        component->connect(components[i - 1]);
+        component->connect(output_component);
       }
 
-      for (std::size_t batchnum = 0; batchnum < N_train;
-           batchnum += batchsize) {
+      output_component->connect(components.back());
+      output_component->connect(label_pipe);
+
+      components.push_back(output_component);
+
+      components.push_back(image_pipe);
+      components.push_back(label_pipe);
+
+      VTSScheduler s(components);
+
+      MT19937 rng;
+
+      timer.reset();
+
+      for (std::size_t epoch = 0; epoch < n_epoch; ++epoch) {
         if (rank == 0) {
-          if ((batchnum + batchsize) % 800 == 0) std::cerr << "#";
+          std::cerr << "Epoch: " << epoch << std::endl;
+          shuffle(perm, perm + N_train, rng);
+        }
 
-          MatrixXf x(batchsize, x_shape);
-          MatrixXf t(batchsize, y_shape);
+        for (std::size_t batchnum = 0; batchnum < N_train;
+             batchnum += batchsize) {
+          if (rank == 0) {
+            if ((batchnum + batchsize) % 800 == 0) std::cerr << "#";
 
-          for (std::size_t i = 0; i < batchsize; ++i) {
-            x.row(i) = x_train.row(perm[batchnum + i]);
-            t.row(i) = y_train.row(perm[batchnum + i]);
+            MatrixXf x(batchsize, x_shape);
+            MatrixXf t(batchsize, y_shape);
+
+            for (std::size_t i = 0; i < batchsize; ++i) {
+              x.row(i) = x_train.row(perm[batchnum + i]);
+              t.row(i) = y_train.row(perm[batchnum + i]);
+            }
+
+            image_pipe->setInput(0, bufferFromMatrix(x));
+            label_pipe->setInput(0, bufferFromMatrix(t));
           }
 
-          image_pipe->setInput(0, bufferFromMatrix(x));
-          label_pipe->setInput(0, bufferFromMatrix(t));
+          s.step();
         }
 
-        s.step();
-      }
-
-      MPI_Barrier(MPI_COMM_WORLD);
-
-      if (rank == 0) {
-        std::cerr << std::endl;
-      }
-
-      MPI_Barrier(MPI_COMM_WORLD);
-
-      for (int i = 0; i < hidden_layers.size(); ++i) {
-        if (hidden_layers[i].count) {
-          std::cerr << "Train\tLayer " << i << "\t"
-                    << "Loss: " << std::setprecision(7)
-                    << hidden_layers[i].loss / hidden_layers[i].count
-                    << std::endl;
-          hidden_layers[i].loss = 0.0;
-          hidden_layers[i].count = 0;
-        }
         MPI_Barrier(MPI_COMM_WORLD);
+
+        if (rank == 0) {
+          elapsed += timer.elapsed();
+          std::cerr << std::endl;
+        }
+
+        MPI_Barrier(MPI_COMM_WORLD);
+
+        for (int i = 0; i < hidden_layers.size(); ++i) {
+          if (hidden_layers[i].count) {
+            std::cerr << "Train\tLayer " << i << "\t"
+                      << "Loss: " << std::setprecision(7)
+                      << hidden_layers[i].loss / hidden_layers[i].count
+                      << std::endl;
+            hidden_layers[i].loss = 0.0;
+            hidden_layers[i].count = 0;
+          }
+          MPI_Barrier(MPI_COMM_WORLD);
+        }
+
+        if (rank == n_procs - 1) {
+          std::cerr << "Train\t Output Loss: " << std::setprecision(7)
+                    << output_layer.loss / output_layer.count
+                    << " Accuracy: " << output_layer.acc / output_layer.count
+                    << std::endl;
+          output_layer.loss = 0.0;
+          output_layer.acc = 0.0;
+          output_layer.count = 0;
+        }
       }
 
-      if (rank == n_procs - 1) {
-        std::cerr << "Train\t Output Loss: " << std::setprecision(7)
-                  << output_layer.loss / output_layer.count
-                  << " Accuracy: " << output_layer.acc / output_layer.count
-                  << std::endl;
-        output_layer.loss = 0.0;
-        output_layer.acc = 0.0;
-        output_layer.count = 0;
+      MPI_Barrier(MPI_COMM_WORLD);
+
+      for (int i = 0; i < components.size(); ++i) {
+        delete components[i];
       }
     }
 
-    MPI_Barrier(MPI_COMM_WORLD);
     if (rank == 0) {
-      std::cout << n_procs << "\t" << timer.elapsed() << std::endl;
-    }
-
-    for (int i = 0; i < components.size(); ++i) {
-      delete components[i];
+      std::cout << n_procs << "\t" << elapsed / n_iter << std::endl;
     }
   }
 
