@@ -202,16 +202,18 @@ class OutputLayer : public Layer {
   std::queue<MatrixXf> xs;
 };
 
-int main() {
+int main(int argc, char* argv[]) {
+  MPI_Init(&argc, &argv);
+
   std::vector<std::vector<unsigned char> > train_images;
   std::vector<unsigned char> train_labels;
-  train_images = read_image("mnist/train-images-idx3-ubyte");
-  train_labels = read_label("mnist/train-labels-idx1-ubyte");
+  train_images = read_images("mnist/train-images-idx3-ubyte");
+  train_labels = read_labels("mnist/train-labels-idx1-ubyte");
 
   std::vector<std::vector<unsigned char> > test_images;
   std::vector<unsigned char> test_labels;
-  test_images = read_image("mnist/t10k-images-idx3-ubyte");
-  test_labels = read_label("mnist/t10k-labels-idx1-ubyte");
+  test_images = read_images("mnist/t10k-images-idx3-ubyte");
+  test_labels = read_labels("mnist/t10k-labels-idx1-ubyte");
 
   std::size_t N_train = train_images.size();
   std::size_t N_test = test_images.size();
@@ -224,9 +226,24 @@ int main() {
   MatrixXf x_test(N_test, x_shape);
   MatrixXf y_test(N_test, y_shape);
 
+  int rank;
+  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
   for (std::size_t i = 0; i < N_train; ++i) {
+    if(rank == 0 && i > 32000) {
+      std::cout << train_images[i].size() << std::endl;
+    }
     for (std::size_t j = 0; j < x_shape; ++j) {
+      if(rank == 0 && i > 32000) {
+        std::cout << i << " " << j << ": " << (int)train_images[i][j] << std::endl;
+        std::cout << x_train.rows() << " " << x_train.cols() << std::endl;
+      }
+      MPI_Barrier(MPI_COMM_WORLD);
       x_train(i, j) = static_cast<float>(train_images[i][j]) / 255.0;
+      if(rank == 0 && i > 32000) {
+        std::cout << i << " " << j << ": " << (int)train_images[i][j] << std::endl;
+      }
+      MPI_Barrier(MPI_COMM_WORLD);
     }
     for (std::size_t j = 0; j < y_shape; ++j) {
       y_train(i, j) = train_labels[i] == j ? 1.0f : 0.0f;
@@ -286,6 +303,16 @@ int main() {
   c5.connect(&c4);
   c5.connect(&cl);
 
+  VTSScheduler s;
+
+  s.addComponent(&c1);
+  s.addComponent(&c2);
+  s.addComponent(&c3);
+  s.addComponent(&c4);
+  s.addComponent(&c5);
+  s.addComponent(&ci);
+  s.addComponent(&cl);
+
   MT19937 rng;
 
   for (std::size_t epoch = 0; epoch < n_epoch; ++epoch) {
@@ -305,27 +332,19 @@ int main() {
         t.row(i) = y_train.row(perm[batchnum + i]);
       }
 
-      MatrixXf h1 = l1.forward(x);
-      MatrixXf h2 = l2.forward(h1);
-      MatrixXf h3 = l3.forward(h2);
-      MatrixXf y = l4.forward(h3);
+      ci.setInput(0, bufferFromMatrix(x));
+      cl.setInput(0, bufferFromMatrix(t));
 
-      loss += cross_entropy(t, y);
-      acc += accuracy(t, y);
-
-      MatrixXf e = y - t;
-      l1.backward(e);
-      l2.backward(e);
-      l3.backward(e);
-      l4.backward(e);
-
-      ++count;
+      s.step();
     }
 
     std::cerr << std::endl;
 
-    std::cout << "Loss: " << std::setprecision(7) << loss / count
-              << " Accuracy: " << acc / count << std::endl;
+    std::cout << "Loss: " << std::setprecision(7) << f5.loss / f5.count
+              << " Accuracy: " << f5.acc / f5.count << std::endl;
+    f5.loss = 0.0;
+    f5.acc = 0.0;
+    f5.count = 0;
   }
 
   return 0;
