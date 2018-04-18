@@ -34,6 +34,24 @@ void print_mnist(VectorXf image) {
   }
 }
 
+class Timer {
+ public:
+  Timer() { reset(); }
+
+  void reset() { clock_gettime(CLOCK_MONOTONIC, &ref); }
+
+  int elapsed() {
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    int sec = now.tv_sec - ref.tv_sec;
+    int nsec = now.tv_nsec - ref.tv_nsec;
+    return (sec * 1000 * 1000) + (nsec / 1000);
+  }
+
+ private:
+  struct timespec ref;
+  struct timespec now;
+};
+
 Buffer bufferFromMatrix(MatrixXf m) {
   std::size_t head_size = 2 * sizeof(std::size_t);
   std::size_t data_size = m.size() * sizeof(float);
@@ -254,7 +272,10 @@ int main(int argc, char* argv[]) {
   MatrixXf x_test(N_test, x_shape);
   MatrixXf y_test(N_test, y_shape);
 
+  int size;
   int rank;
+
+  MPI_Comm_size(MPI_COMM_WORLD, &size);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
   for (std::size_t i = 0; i < N_train; ++i) {
@@ -284,56 +305,49 @@ int main(int argc, char* argv[]) {
   std::size_t n_hidden = 480;
   std::size_t n_output = 10;
 
-  HiddenLayer l1(x_shape, n_hidden, n_output);
-  HiddenLayer l2(n_hidden, n_hidden, n_output);
-  HiddenLayer l3(n_hidden, n_hidden, n_output);
-  OutputLayer l4(n_hidden, n_output);
+  std::vector<Layer*> layers;
+  std::vector<Functor*> functors;
+  std::vector<Component*> components;
 
-  LayerFunctor f1(&l1);
-  LayerFunctor f2(&l2);
-  LayerFunctor f3(&l3);
-  LayerFunctor f4(&l4);
-  ErrorFunctor f5;
+  for (std::size_t i = 0; i < size - 1; ++i) {
+    std::size_t n_input = i ? n_hidden : x_shape;
+    layers.push_back(new HiddenLayer(n_input, n_hidden, n_output));
+    functors.push_back(new LayerFunctor(layers.back()));
+    components.push_back(new Component(*functors.back(), i));
+  }
+
+  layers.push_back(new OutputLayer(n_hidden, n_output));
+  functors.push_back(new LayerFunctor(layers.back()));
+  components.push_back(new Component(*functors.back(), size - 1));
+
+  ErrorFunctor error_functor;
   Pipe pipe;
 
-  Component c1(f1, 0);
-  Component c2(f2, 1);
-  Component c3(f3, 2);
-  Component c4(f4, 3);
-  Component c5(f5, 3);
-  Component ci(pipe, 0);
-  Component cl(pipe, 0);
+  Component error_component(error_functor, size - 1);
+  Component image_pipe(pipe, 0);
+  Component label_pipe(pipe, 0);
 
-  c1.connect(&ci);
-  c1.connect(&c5);
+  for (std::size_t i = 0; i < components.size(); ++i) {
+    Component* from = i ? components[i - 1] : &image_pipe;
+    components[i]->connect(from);
+    components[i]->connect(&error_component);
+  }
 
-  c2.connect(&c1);
-  c2.connect(&c5);
+  error_component.connect(components.back());
+  error_component.connect(&label_pipe);
 
-  c3.connect(&c2);
-  c3.connect(&c5);
+  VTSScheduler s(components);
 
-  c4.connect(&c3);
-  c4.connect(&c5);
-
-  c5.connect(&c4);
-  c5.connect(&cl);
-
-  VTSScheduler s;
-
-  s.addComponent(&c1);
-  s.addComponent(&c2);
-  s.addComponent(&c3);
-  s.addComponent(&c4);
-  s.addComponent(&c5);
-  s.addComponent(&ci);
-  s.addComponent(&cl);
+  s.addComponent(&error_component);
+  s.addComponent(&image_pipe);
+  s.addComponent(&label_pipe);
 
   MT19937 rng;
 
   for (std::size_t epoch = 0; epoch < n_epoch; ++epoch) {
     shuffle(perm, perm + N_train, rng);
 
+    Timer timer;
     for (std::size_t batchnum = 0; batchnum < N_train; batchnum += batchsize) {
       if (rank == 0) {
         if ((batchnum + batchsize) % 800 == 0) std::cerr << "#";
@@ -346,8 +360,8 @@ int main(int argc, char* argv[]) {
           t.row(i) = y_train.row(perm[batchnum + i]);
         }
 
-        ci.setInput(0, bufferFromMatrix(x));
-        cl.setInput(0, bufferFromMatrix(t));
+        image_pipe.setInput(0, bufferFromMatrix(x));
+        label_pipe.setInput(0, bufferFromMatrix(t));
       }
 
       s.step();
@@ -357,24 +371,43 @@ int main(int argc, char* argv[]) {
 
     if (rank == 0) {
       std::cerr << std::endl;
+      std::cout << epoch << " " << timer.elapsed() << std::endl;
     }
 
     MPI_Barrier(MPI_COMM_WORLD);
 
-    if (rank == 0) {
-      std::cout << "Loss: " << std::setprecision(7) << l1.loss / l1.count
-                << std::endl;
-      l1.loss = 0.0;
-      l1.count = 0;
+    for (std::size_t i = 0; i < layers.size() - 1; ++i) {
+      if (i == rank) {
+        HiddenLayer* layer = dynamic_cast<HiddenLayer*>(layers[i]);
+        std::cout << "Loss: " << std::setprecision(7)
+                  << layer->loss / layer->count << std::endl;
+        layer->loss = 0.0;
+        layer->count = 0;
+      }
+      MPI_Barrier(MPI_COMM_WORLD);
     }
 
-    if (rank == 3) {
-      std::cout << "Loss: " << std::setprecision(7) << f5.loss / f5.count
-                << " Accuracy: " << f5.acc / f5.count << std::endl;
-      f5.loss = 0.0;
-      f5.acc = 0.0;
-      f5.count = 0;
+    if (rank == size - 1) {
+      std::cout << "Loss: " << std::setprecision(7)
+                << error_functor.loss / error_functor.count
+                << " Accuracy: " << error_functor.acc / error_functor.count
+                << std::endl;
+      error_functor.loss = 0.0;
+      error_functor.acc = 0.0;
+      error_functor.count = 0;
     }
+  }
+
+  for (std::size_t i = 0; i < layers.size(); ++i) {
+    delete layers[i];
+  }
+
+  for (std::size_t i = 0; i < functors.size(); ++i) {
+    delete functors[i];
+  }
+
+  for (std::size_t i = 0; i < components.size(); ++i) {
+    delete components[i];
   }
 
   MPI_Finalize();

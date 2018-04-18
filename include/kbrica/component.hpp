@@ -14,6 +14,8 @@ class Component {
     MPI_Comm_rank(MPI_COMM_WORLD, &actual);
   }
 
+  virtual ~Component() {}
+
   void collect() {
     if (wanted == actual) {
       for (std::size_t i = 0; i < connected.size(); ++i) {
