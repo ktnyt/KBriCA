@@ -1,5 +1,6 @@
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <queue>
 #include <vector>
 
@@ -15,10 +16,10 @@
 using namespace kbrica;
 using namespace Eigen;
 
-void print_mnist(float* image, float* label) {
+void print_mnist(VectorXf image) {
   for (std::size_t i = 0; i < 28; ++i) {
     for (std::size_t j = 0; j < 28; ++j) {
-      float pixel = image[i * 28 + j];
+      float pixel = image(i * 28 + j);
       if (pixel < 0.25) {
         std::cout << "  ";
       } else if (pixel < 0.5) {
@@ -31,13 +32,9 @@ void print_mnist(float* image, float* label) {
     }
     std::cout << std::endl;
   }
-
-  for (std::size_t i = 0; i < 10; ++i) {
-    std::cout << i << " " << static_cast<int>(label[i]) << std::endl;
-  }
 }
 
-Buffer bufferFromMatrix(MatrixXf& m) {
+Buffer bufferFromMatrix(MatrixXf m) {
   std::size_t head_size = 2 * sizeof(std::size_t);
   std::size_t data_size = m.size() * sizeof(float);
   Buffer buffer(head_size + data_size);
@@ -47,18 +44,27 @@ Buffer bufferFromMatrix(MatrixXf& m) {
   *reinterpret_cast<std::size_t*>(data) = m.cols();
   data += sizeof(std::size_t);
   float* casted = reinterpret_cast<float*>(data);
-  std::copy(m.data(), m.data() + m.size(), casted);
+  for (std::size_t i = 0; i < m.rows(); ++i) {
+    for (std::size_t j = 0; j < m.cols(); ++j) {
+      casted[i * m.cols() + j] = m(i, j);
+    }
+  }
   return buffer;
 }
 
-MatrixXf matrixFromBuffer(Buffer& buffer) {
+MatrixXf matrixFromBuffer(Buffer buffer) {
   char* data = buffer.data();
   std::size_t rows = *reinterpret_cast<std::size_t*>(data);
   data += sizeof(std::size_t);
   std::size_t cols = *reinterpret_cast<std::size_t*>(data);
+  data += sizeof(std::size_t);
   MatrixXf m(rows, cols);
   float* casted = reinterpret_cast<float*>(data);
-  std::copy(casted, casted + m.size(), m.data());
+  for (std::size_t i = 0; i < m.rows(); ++i) {
+    for (std::size_t j = 0; j < m.cols(); ++j) {
+      m(i, j) = casted[i * m.cols() + j];
+    }
+  }
   return m;
 }
 
@@ -126,6 +132,7 @@ class ErrorFunctor : public Functor {
       MatrixXf e = y - t;
       loss += cross_entropy(y, t);
       acc += accuracy(y, t);
+      ++count;
 
       buffer = bufferFromMatrix(e);
     }
@@ -151,10 +158,25 @@ class Pipe : public Functor {
 class HiddenLayer : public Layer {
  public:
   HiddenLayer(std::size_t n_input, std::size_t n_output, std::size_t n_final)
-      : W(uniform(n_input, n_output)), B(uniform(n_final, n_output)) {}
+      : W(uniform(n_input, n_output)),
+        B(uniform(n_final, n_output)),
+        lr(0.01),
+        epsilon(std::numeric_limits<float>::epsilon()),
+        loss(0.0),
+        count(0) {}
 
   MatrixXf forward(MatrixXf x) {
     MatrixXf y = (x * W).unaryExpr(&sigmoid);
+    if (lr > epsilon) {
+      MatrixXf z = (y * W.transpose()).unaryExpr(&sigmoid);
+      MatrixXf d_z = z - x;
+      loss += mean_squared_error(z, x);
+      ++count;
+      MatrixXf d_y = (d_z * W).array() * y.unaryExpr(&dsigmoid).array();
+      MatrixXf d_W = -(x.transpose() * d_y + d_z.transpose() * y);
+      W += d_W * lr;
+      lr *= 0.9995;
+    }
     xs.push(x);
     ys.push(y);
     return y;
@@ -177,6 +199,12 @@ class HiddenLayer : public Layer {
   MatrixXf B;
   std::queue<MatrixXf> xs;
   std::queue<MatrixXf> ys;
+  float lr;
+  float epsilon;
+
+ public:
+  float loss;
+  std::size_t count;
 };
 
 class OutputLayer : public Layer {
@@ -230,20 +258,8 @@ int main(int argc, char* argv[]) {
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
   for (std::size_t i = 0; i < N_train; ++i) {
-    if(rank == 0 && i > 32000) {
-      std::cout << train_images[i].size() << std::endl;
-    }
     for (std::size_t j = 0; j < x_shape; ++j) {
-      if(rank == 0 && i > 32000) {
-        std::cout << i << " " << j << ": " << (int)train_images[i][j] << std::endl;
-        std::cout << x_train.rows() << " " << x_train.cols() << std::endl;
-      }
-      MPI_Barrier(MPI_COMM_WORLD);
       x_train(i, j) = static_cast<float>(train_images[i][j]) / 255.0;
-      if(rank == 0 && i > 32000) {
-        std::cout << i << " " << j << ": " << (int)train_images[i][j] << std::endl;
-      }
-      MPI_Barrier(MPI_COMM_WORLD);
     }
     for (std::size_t j = 0; j < y_shape; ++j) {
       y_train(i, j) = train_labels[i] == j ? 1.0f : 0.0f;
@@ -316,36 +332,52 @@ int main(int argc, char* argv[]) {
   MT19937 rng;
 
   for (std::size_t epoch = 0; epoch < n_epoch; ++epoch) {
-    float loss = 0.0;
-    float acc = 0.0;
-    std::size_t count = 0;
-
     shuffle(perm, perm + N_train, rng);
+
     for (std::size_t batchnum = 0; batchnum < N_train; batchnum += batchsize) {
-      if ((batchnum + batchsize) % 800 == 0) std::cerr << "#";
+      if (rank == 0) {
+        if ((batchnum + batchsize) % 800 == 0) std::cerr << "#";
 
-      MatrixXf x(batchsize, x_shape);
-      MatrixXf t(batchsize, y_shape);
+        MatrixXf x(batchsize, x_shape);
+        MatrixXf t(batchsize, y_shape);
 
-      for (std::size_t i = 0; i < batchsize; ++i) {
-        x.row(i) = x_train.row(perm[batchnum + i]);
-        t.row(i) = y_train.row(perm[batchnum + i]);
+        for (std::size_t i = 0; i < batchsize; ++i) {
+          x.row(i) = x_train.row(perm[batchnum + i]);
+          t.row(i) = y_train.row(perm[batchnum + i]);
+        }
+
+        ci.setInput(0, bufferFromMatrix(x));
+        cl.setInput(0, bufferFromMatrix(t));
       }
-
-      ci.setInput(0, bufferFromMatrix(x));
-      cl.setInput(0, bufferFromMatrix(t));
 
       s.step();
     }
 
-    std::cerr << std::endl;
+    MPI_Barrier(MPI_COMM_WORLD);
 
-    std::cout << "Loss: " << std::setprecision(7) << f5.loss / f5.count
-              << " Accuracy: " << f5.acc / f5.count << std::endl;
-    f5.loss = 0.0;
-    f5.acc = 0.0;
-    f5.count = 0;
+    if (rank == 0) {
+      std::cerr << std::endl;
+    }
+
+    MPI_Barrier(MPI_COMM_WORLD);
+
+    if (rank == 0) {
+      std::cout << "Loss: " << std::setprecision(7) << l1.loss / l1.count
+                << std::endl;
+      l1.loss = 0.0;
+      l1.count = 0;
+    }
+
+    if (rank == 3) {
+      std::cout << "Loss: " << std::setprecision(7) << f5.loss / f5.count
+                << " Accuracy: " << f5.acc / f5.count << std::endl;
+      f5.loss = 0.0;
+      f5.acc = 0.0;
+      f5.count = 0;
+    }
   }
+
+  MPI_Finalize();
 
   return 0;
 }

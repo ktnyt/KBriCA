@@ -1,3 +1,6 @@
+#ifndef __ADFA_RANDOM_HPP__
+#define __ADFA_RANDOM_HPP__
+
 #include <cmath>
 #include <ctime>
 #include <limits>
@@ -51,3 +54,5 @@ class Normal {
   T mu, sigma, u, v, w, s, m;
   bool has_w;
 };
+
+#endif

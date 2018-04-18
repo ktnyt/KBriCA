@@ -1,3 +1,6 @@
+#ifndef __MT64_HPP__
+#define __MT64_HPP__
+
 #include <ctime>
 
 #define NN 312
@@ -65,3 +68,5 @@ class MT19937 {
 
   unsigned long long mag01[2];
 };
+
+#endif
