@@ -178,7 +178,7 @@ class HiddenLayer : public Layer {
   HiddenLayer(std::size_t n_input, std::size_t n_output, std::size_t n_final)
       : W(uniform(n_input, n_output)),
         B(uniform(n_final, n_output)),
-        lr(0.01),
+        lr(0.005),
         epsilon(std::numeric_limits<float>::epsilon()),
         loss(0.0),
         count(0) {}
@@ -300,7 +300,7 @@ int main(int argc, char* argv[]) {
     perm[i] = i;
   }
 
-  std::size_t n_epoch = 20;
+  std::size_t n_epoch = 1000;
   std::size_t batchsize = 100;
   std::size_t n_hidden = 480;
   std::size_t n_output = 10;
@@ -376,23 +376,12 @@ int main(int argc, char* argv[]) {
 
     MPI_Barrier(MPI_COMM_WORLD);
 
-    for (std::size_t i = 0; i < layers.size() - 1; ++i) {
-      if (i == rank) {
-        HiddenLayer* layer = dynamic_cast<HiddenLayer*>(layers[i]);
-        std::cout << "Loss: " << std::setprecision(7)
-                  << layer->loss / layer->count << std::endl;
-        layer->loss = 0.0;
-        layer->count = 0;
-      }
-      MPI_Barrier(MPI_COMM_WORLD);
-    }
-
     if (rank == size - 1) {
-      std::cout << "Loss: " << std::setprecision(7)
-                << error_functor.loss / error_functor.count
-                << " Accuracy: " << error_functor.acc / error_functor.count
-                << std::endl;
-      error_functor.loss = 0.0;
+      float loss = error_functor.loss / error_functor.count;
+      float acc = error_functor.acc / error_functor.count;
+      std::cout << "Loss: " << std::setprecision(7) << loss
+                << " Accuracy: " << acc << std::endl;
+      if (acc >= 0.98) error_functor.loss = 0.0;
       error_functor.acc = 0.0;
       error_functor.count = 0;
     }
